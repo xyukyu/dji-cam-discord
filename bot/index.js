@@ -5,7 +5,6 @@ const { Client, GatewayIntentBits, EmbedBuilder } = require("discord.js");
 
 const {
   DISCORD_BOT_TOKEN,
-  DISCORD_CHANNEL_ID,
   CAMERA_BLE_ADDRESS,
   HOME_WIFI_SSID,
   HOME_WIFI_PASSWORD,
@@ -17,7 +16,6 @@ const {
 
 for (const [name, value] of Object.entries({
   DISCORD_BOT_TOKEN,
-  DISCORD_CHANNEL_ID,
   CAMERA_BLE_ADDRESS,
   HOME_WIFI_SSID,
   HOME_WIFI_PASSWORD,
@@ -35,6 +33,10 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
 // 直近の配信開始通知メッセージ(配信終了時にこれを編集する)
 let lastStreamMessage = null;
+
+// 固定のチャンネルIDを設定で持たず、直近で `/cam start` が実行された
+// チャンネルを通知先として記憶する(サーバー/チャンネルをまたいで使い回せるように)。
+let notifyChannelId = null;
 
 // djictlの `ble connect-wifi-and-start-streaming` は配信開始後もプロセスが終了せず、
 // バッテリー等のテレメトリを監視し続ける常駐プロセスとして動作する(実機確認済み、2026-07-26)。
@@ -142,6 +144,7 @@ client.on("interactionCreate", async (interaction) => {
 
   if (sub === "start") {
     await interaction.deferReply();
+    notifyChannelId = interaction.channelId;
     try {
       await startCameraStream();
       await interaction.editReply(
@@ -180,8 +183,12 @@ const app = express();
 
 app.post("/stream-started", async (_req, res) => {
   res.sendStatus(200);
+  if (!notifyChannelId) {
+    console.error("通知先チャンネル未確定のため配信開始通知をスキップ(先に/cam startを実行してください)");
+    return;
+  }
   try {
-    const channel = await client.channels.fetch(DISCORD_CHANNEL_ID);
+    const channel = await client.channels.fetch(notifyChannelId);
     lastStreamMessage = await channel.send({
       embeds: [buildStreamEmbed({ ended: false })],
     });
@@ -206,8 +213,11 @@ app.post("/stream-stopped", async (_req, res) => {
   res.sendStatus(200);
   clearInterval(batteryUpdateInterval);
   batteryUpdateInterval = null;
+  if (!notifyChannelId) {
+    return;
+  }
   try {
-    const channel = await client.channels.fetch(DISCORD_CHANNEL_ID);
+    const channel = await client.channels.fetch(notifyChannelId);
     const embed = buildStreamEmbed({ ended: true });
 
     if (lastStreamMessage) {

@@ -16,12 +16,12 @@ const commands = [
 const rest = new REST().setToken(process.env.DISCORD_BOT_TOKEN);
 
 (async () => {
-  await rest.put(
-    Routes.applicationGuildCommands(
-      process.env.DISCORD_CLIENT_ID,
-      process.env.DISCORD_GUILD_ID
-    ),
-    { body: commands }
+  // グローバル登録: どのサーバーにBotを招待しても使える(ギルドID不要)。
+  // ただし反映まで最大1時間ほどかかる(ギルド限定登録は即時だがサーバーごとの設定が必要になる)。
+  await rest.put(Routes.applicationCommands(process.env.DISCORD_CLIENT_ID), {
+    body: commands,
+  });
+  console.log(
+    "スラッシュコマンドをグローバル登録しました(反映まで最大1時間ほどかかる場合があります)。"
   );
-  console.log("スラッシュコマンドを登録しました。");
 })();
