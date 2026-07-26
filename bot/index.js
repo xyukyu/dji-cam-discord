@@ -51,6 +51,10 @@ let batteryUpdateInterval = null;
 
 const BATTERY_UPDATE_INTERVAL_MS = 15_000;
 
+// 画質設定。/cam start でオプション指定が無ければこの値(前回値)を使う。
+// 初期値は自宅WiFiの電波状況を踏まえた安定寄りの設定(1080p/6000Kbpsのdjictlデフォルトより控えめ)。
+let currentSettings = { resolution: "720p", bitrateKbps: 3000, fps: 30 };
+
 function buildStreamEmbed({ ended }) {
   const embed = new EmbedBuilder()
     .setColor(ended ? 0x2f3136 : 0xed4245)
@@ -60,6 +64,11 @@ function buildStreamEmbed({ ended }) {
     embed.setTitle("⚫ 配信終了");
   } else {
     embed.setTitle("🔴 配信開始").setDescription(`[視聴ページを開く](${VIEWER_BASE_URL})`);
+    embed.addFields({
+      name: "画質設定",
+      value: `${currentSettings.resolution} / ${currentSettings.bitrateKbps}Kbps / ${currentSettings.fps}fps`,
+      inline: true,
+    });
   }
 
   if (lastBatteryPercent !== null) {
@@ -94,6 +103,12 @@ function startCameraStream() {
       HOME_WIFI_PASSWORD,
       "--rtmp-url",
       RTMP_URL,
+      "--resolution",
+      currentSettings.resolution,
+      "--bitrate-kbps",
+      String(currentSettings.bitrateKbps),
+      "--fps",
+      String(currentSettings.fps),
     ],
     { stdio: ["ignore", "pipe", "pipe"] }
   );
@@ -145,10 +160,18 @@ client.on("interactionCreate", async (interaction) => {
   if (sub === "start") {
     await interaction.deferReply();
     notifyChannelId = interaction.channelId;
+
+    const resolution = interaction.options.getString("resolution");
+    const bitrateKbps = interaction.options.getInteger("bitrate_kbps");
+    const fps = interaction.options.getInteger("fps");
+    if (resolution) currentSettings.resolution = resolution;
+    if (bitrateKbps) currentSettings.bitrateKbps = bitrateKbps;
+    if (fps) currentSettings.fps = fps;
+
     try {
       await startCameraStream();
       await interaction.editReply(
-        "カメラにWiFi接続+配信開始を指示しました。数秒〜数十秒後に配信が始まると自動でお知らせします。"
+        `カメラにWiFi接続+配信開始を指示しました(${currentSettings.resolution} / ${currentSettings.bitrateKbps}Kbps / ${currentSettings.fps}fps)。数秒〜数十秒後に配信が始まると自動でお知らせします。`
       );
     } catch (err) {
       console.error("カメラへの配信開始指示に失敗:", err);
