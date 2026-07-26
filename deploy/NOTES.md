@@ -55,12 +55,13 @@ djictl ble --filter-device-addr <addr> connect-wifi-and-start-streaming \
 `spawn`(起動したら待たずに参照だけ保持)で実装している。誤って `execFile` + タイムアウトに
 戻すと、配信自体は成功していても「失敗」と誤判定されるので注意。
 
-### 発見: バッテリー残量がリアルタイムで取得できる
+### 発見: バッテリー残量がリアルタイムで取得できる(v2で実装済み)
 
-事前調査(README/Issueベース)では「Pocket 3ではバッテリー取得は未検証」とされていたが、
-実機では `connect-wifi-and-start-streaming` 実行中、標準出力に
-`interface_app_to_video_transmission_start_live_stream.go:45 battery: NN%` が毎秒出力されることを確認した。
-v1のスコープ外だが、v2でステータス表示を追加する際は真っ先にこれをパースする実装を検討すること。
+`connect-wifi-and-start-streaming` 実行中、標準"エラー"出力に
+`interface_app_to_video_transmission_start_live_stream.go:45 battery: NN%` が毎秒出力される。
+**djictlのINFO/DEBUログは標準出力ではなくstderrに出る**ので注意(実機で1時間ほどハマった箇所)。
+`bot/index.js` は `child.stdout` と `child.stderr` の両方に同じパース処理を適用することで対応済み。
+バッテリー%はDiscordの配信開始embedに15秒おきに更新表示される(`buildStreamEmbed`/`BATTERY_UPDATE_INTERVAL_MS`)。
 
 ### ハマったポイント: 「pairing_started」の繰り返しは正常な場合がある
 

@@ -41,6 +41,36 @@ let lastStreamMessage = null;
 // そのため execFile ではなく spawn で起動し、終了を待たずに参照だけ保持する。
 let cameraProcess = null;
 
+// djictlの標準出力に毎秒流れる `battery: NN%` をパースして保持する。
+// 例: "interface_app_to_video_transmission_start_live_stream.go:45 battery: 78%"
+const BATTERY_LINE_RE = /battery:\s*(\d+)%/;
+let lastBatteryPercent = null;
+let batteryUpdateInterval = null;
+
+const BATTERY_UPDATE_INTERVAL_MS = 15_000;
+
+function buildStreamEmbed({ ended }) {
+  const embed = new EmbedBuilder()
+    .setColor(ended ? 0x2f3136 : 0xed4245)
+    .setTimestamp(new Date());
+
+  if (ended) {
+    embed.setTitle("⚫ 配信終了");
+  } else {
+    embed.setTitle("🔴 配信開始").setDescription(`[視聴ページを開く](${VIEWER_BASE_URL})`);
+  }
+
+  if (lastBatteryPercent !== null) {
+    embed.addFields({
+      name: "バッテリー",
+      value: `${lastBatteryPercent}%`,
+      inline: true,
+    });
+  }
+
+  return embed;
+}
+
 function startCameraStream() {
   if (cameraProcess) {
     throw new Error("すでに配信指示中/配信中です(先に /cam stop してください)");
@@ -66,9 +96,22 @@ function startCameraStream() {
     { stdio: ["ignore", "pipe", "pipe"] }
   );
 
+  lastBatteryPercent = null;
   cameraProcess = child;
-  child.stdout.on("data", (buf) => console.log(`[djictl] ${buf}`.trimEnd()));
-  child.stderr.on("data", (buf) => console.error(`[djictl] ${buf}`.trimEnd()));
+
+  // djictlはINFO/DEBUログをstdoutではなくstderrに出力する(実機確認済み)。
+  // どちらに出ても拾えるよう両方のストリームでバッテリー行を解析する。
+  const handleOutput = (streamName, buf) => {
+    const text = buf.toString();
+    const log = streamName === "stderr" ? console.error : console.log;
+    log(`[djictl] ${text}`.trimEnd());
+    const match = text.match(BATTERY_LINE_RE);
+    if (match) {
+      lastBatteryPercent = Number(match[1]);
+    }
+  };
+  child.stdout.on("data", (buf) => handleOutput("stdout", buf));
+  child.stderr.on("data", (buf) => handleOutput("stderr", buf));
   child.on("exit", (code, signal) => {
     console.log(`[djictl] 終了 code=${code} signal=${signal}`);
     cameraProcess = null;
@@ -139,12 +182,21 @@ app.post("/stream-started", async (_req, res) => {
   res.sendStatus(200);
   try {
     const channel = await client.channels.fetch(DISCORD_CHANNEL_ID);
-    const embed = new EmbedBuilder()
-      .setTitle("🔴 配信開始")
-      .setDescription(`[視聴ページを開く](${VIEWER_BASE_URL})`)
-      .setColor(0xed4245)
-      .setTimestamp(new Date());
-    lastStreamMessage = await channel.send({ embeds: [embed] });
+    lastStreamMessage = await channel.send({
+      embeds: [buildStreamEmbed({ ended: false })],
+    });
+
+    clearInterval(batteryUpdateInterval);
+    batteryUpdateInterval = setInterval(async () => {
+      if (!lastStreamMessage) return;
+      try {
+        await lastStreamMessage.edit({
+          embeds: [buildStreamEmbed({ ended: false })],
+        });
+      } catch (err) {
+        console.error("バッテリー表示の更新に失敗:", err);
+      }
+    }, BATTERY_UPDATE_INTERVAL_MS);
   } catch (err) {
     console.error("配信開始通知の送信に失敗:", err);
   }
@@ -152,12 +204,11 @@ app.post("/stream-started", async (_req, res) => {
 
 app.post("/stream-stopped", async (_req, res) => {
   res.sendStatus(200);
+  clearInterval(batteryUpdateInterval);
+  batteryUpdateInterval = null;
   try {
     const channel = await client.channels.fetch(DISCORD_CHANNEL_ID);
-    const embed = new EmbedBuilder()
-      .setTitle("⚫ 配信終了")
-      .setColor(0x2f3136)
-      .setTimestamp(new Date());
+    const embed = buildStreamEmbed({ ended: true });
 
     if (lastStreamMessage) {
       await lastStreamMessage.edit({ embeds: [embed] });
