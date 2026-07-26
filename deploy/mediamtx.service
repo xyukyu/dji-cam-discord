@@ -1,0 +1,15 @@
+[Unit]
+Description=MediaMTX (RTMP -> HLS relay for dji-cam-discord)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=<your-user>
+WorkingDirectory=/home/<your-user>/dji-cam-discord/mediamtx
+ExecStart=/home/<your-user>/dji-cam-discord/mediamtx/mediamtx /home/<your-user>/dji-cam-discord/mediamtx/mediamtx.yml
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,14 @@
+[Unit]
+Description=Cloudflare Quick Tunnel (dji-cam-discord viewer)
+After=network-online.target mediamtx.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=<your-user>
+ExecStart=/usr/local/bin/cloudflared tunnel --url http://localhost:8888
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

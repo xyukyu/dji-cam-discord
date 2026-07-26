@@ -1,0 +1,15 @@
+[Unit]
+Description=DJI Camera Discord Bot (dji-cam-discord)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=<your-user>
+WorkingDirectory=/home/<your-user>/dji-cam-discord/bot
+ExecStart=/usr/bin/node index.js
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

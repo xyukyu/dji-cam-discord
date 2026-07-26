@@ -1,0 +1,30 @@
+# MediaMTX 設定(抜粋)。フルの設定ファイルは `mediamtx --help` 同梱のデフォルト
+# mediamtx.yml をベースに、このファイルの内容で上書き/追記する。
+#
+# 注意: runOnAvailable/runOnUnavailable は執筆時点(MediaMTX最新版)のフック名。
+# インストールしたバージョンによっては旧名 runOnReady/runOnNotReady の場合があるので、
+# デプロイ時に `mediamtx --help` またはインストール済みバイナリ同梱の mediamtx.yml の
+# コメントで実際のキー名を確認し、必要なら読み替えること。
+
+rtmp: yes
+rtmpAddress: :1935          # 自宅LAN内のみで待ち受け(外部公開しない)
+
+hls: yes
+hlsAddress: :8888
+hlsAlwaysRemux: yes         # 誰も見ていなくてもRTMP受信中は常にHLSを生成する
+hlsVariant: lowLatency
+hlsSegmentCount: 7
+hlsSegmentDuration: 1s
+
+paths:
+  pocket3:
+    # カメラがここに直接RTMP pushする想定: rtmp://<ラズパイのIP>:1935/pocket3
+    source: publisher
+
+    # 配信開始(カメラがpublish開始)を検知してBotのwebhookにPOST
+    # ポート番号は bot/.env の WEBHOOK_PORT と一致させること(デフォルト3100)
+    runOnAvailable: curl -s -X POST http://127.0.0.1:3100/stream-started
+    runOnAvailableRestart: no
+
+    # 配信終了(カメラがpublish停止/切断)を検知してBotのwebhookにPOST
+    runOnUnavailable: curl -s -X POST http://127.0.0.1:3100/stream-stopped
