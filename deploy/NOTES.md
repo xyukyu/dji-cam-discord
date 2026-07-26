@@ -1,6 +1,6 @@
 # デプロイ手順メモ
 
-前提: `discord-bots/gcalcord/CLAUDE.md` と同じ `ssh raspi`(鍵認証、`192.168.1.43`)が使える状態であること。
+前提: `discord-bots/gcalcord/CLAUDE.md` と同じ `ssh raspi`(鍵認証)が使える状態であること。
 2026-07-26に実機で一通り構築・動作確認済み(`/cam start` → 実映像視聴まで成功)。
 
 ## 0. ラズパイの下調べ・前提セットアップ(確認済み)
@@ -45,7 +45,7 @@ djictl ble --filter-device-addr <addr> connect-wifi-and-start-streaming \
 
 `--rtmp-url` はカメラ自身がWiFi経由で直接接続する宛先。**`127.0.0.1`はカメラ自身を指してしまい、
 ラズパイには絶対に届かない。** 必ずラズパイのLAN上の実IPアドレスを指定すること
-(例: `rtmp://192.168.1.43:1935/pocket3`)。これは実際にハマった箇所なので注意。
+(例: `rtmp://192.168.1.100:1935/pocket3`)。これは実際にハマった箇所なので注意。
 
 ### 重要な仕様: プロセスは配信成功後も終了しない
 
@@ -89,7 +89,7 @@ v1.19.3で実機確認済みのキー名)。
 
 **ufwでRTMPポートをLANからだけ許可する(重要・実際にこれで最初ハマった):**
 ```
-ssh raspi "sudo ufw allow from 192.168.1.0/24 to any port 1935 proto tcp comment 'dji-cam RTMP (LAN only)'"
+ssh raspi "sudo ufw allow from <自宅LANのサブネット, 例: 192.168.1.0/24> to any port 1935 proto tcp comment 'dji-cam RTMP (LAN only)'"
 ```
 これを忘れると、カメラはWiFi接続・配信コマンド送信まで成功するのにRTMPパケットがラズパイに
 到達せず、MediaMTX側は永久に「no stream is available」のままになる(症状だけ見ると
