@@ -80,3 +80,19 @@ node index.js
 - 配信断の自動検知・再通知(現状はバッテリー切れ/WiFi切断時に無言で止まる)
 - カメラの電源ONを自動検知して配信を自動開始
 - 独自ドメインでの視聴URL固定化
+
+## ライセンス
+
+このリポジトリ自体は [MIT License](LICENSE) です。
+
+利用しているOSS(いずれも緩いライセンスで、上記MITライセンスとの互換性に問題ありません):
+
+| 利用物 | ライセンス | 用途 |
+|---|---|---|
+| [discord.js](https://github.com/discordjs/discord.js) | Apache-2.0 | Discord Bot |
+| [express](https://github.com/expressjs/express) | MIT | webhook受信サーバー |
+| [dotenv](https://github.com/motdotla/dotenv) | BSD-2-Clause | 環境変数読み込み |
+| [djictl](https://github.com/xaionaro-go/djictl) | CC0 1.0 | Bluetooth経由のカメラ制御(別途ビルドして利用、リポジトリには含まない) |
+| [MediaMTX](https://github.com/bluenviron/mediamtx) | MIT | RTMP受信・HLS変換(別途バイナリを取得して利用) |
+| [hls.js](https://github.com/video-dev/hls.js) | Apache-2.0 | `viewer/index.html` からCDN参照 |
+| [cloudflared](https://github.com/cloudflare/cloudflared) | Apache-2.0 | 外部公開用トンネル(別途インストールして利用) |
