@@ -43,8 +43,15 @@ sequenceDiagram
 - **`/cam stop`** — 配信制御プロセスを停止
 - **配信開始/終了の自動通知** — MediaMTX が RTMP の生死を検知し、Discord に視聴リンク付きで自動投稿(手動での画面共有は不要)
 - **バッテリー残量のリアルタイム表示** — 配信中、15秒おきに埋め込みメッセージが更新される
-- **画質の調整** — `/cam start resolution:720p bitrate_kbps:3000 fps:30` のようにオプション指定可能。自宅 WiFi の電波状況に応じて調整できる
-- **チャンネル/サーバーの固定設定が不要** — スラッシュコマンドはグローバル登録、通知先チャンネルは直近で `/cam start` を実行した場所を自動で記憶する
+- **画質の調整** — `/cam start resolution:720p bitrate_kbps:3000 fps:30` のようにオプション指定可能。省略時は前回値(初期値は720p/3000Kbps/30fps)を使う(Bot再起動でリセット)
+- **チャンネル/サーバーの固定設定が不要** — スラッシュコマンドはグローバル登録、通知先チャンネルは直近で `/cam start` を実行した場所を自動で記憶する(Bot再起動でリセット)
+
+## ディレクトリ構成
+
+- `bot/` — discord.js v14 製 Bot。`/cam start` コマンドと、MediaMTXからのwebhook受信用Expressサーバーを1プロセスで実装
+- `mediamtx/mediamtx.yml` — RTMP受信・HLS変換・webhookフックの設定
+- `viewer/index.html` — hls.js による視聴ページ(静的ファイル。参考実装、通常はMediaMTX自動生成ページで足りる)
+- `deploy/` — systemd unit ファイルとデプロイ手順
 
 ## 技術スタック
 
@@ -58,7 +65,7 @@ sequenceDiagram
 
 ## セットアップ
 
-実機での構築手順(Go/djictlのビルド、MediaMTX導入、Cloudflare Tunnel設定、systemd化など)は [`deploy/NOTES.md`](deploy/NOTES.md) に詳細を記載しています。アプリ全体の設計・既知の制約は [`CLAUDE.md`](CLAUDE.md) を参照してください。
+Discord Botの作成からRaspberry Piでの常駐稼働までの手順は [`SETUP.md`](SETUP.md) にまとめています。実機構築時のトラブルシューティングは [`deploy/NOTES.md`](deploy/NOTES.md) を参照してください。
 
 ```
 cd bot
