@@ -12,6 +12,7 @@ const {
   DJICTL_PATH,
   WEBHOOK_PORT,
   VIEWER_BASE_URL,
+  CLOUDFLARED_METRICS_URL,
 } = process.env;
 
 for (const [name, value] of Object.entries({
@@ -21,12 +22,44 @@ for (const [name, value] of Object.entries({
   HOME_WIFI_PASSWORD,
   RTMP_URL,
   DJICTL_PATH,
-  VIEWER_BASE_URL,
 })) {
   if (!value) {
     console.error(`環境変数 ${name} が設定されていません(.envを確認)`);
     process.exit(1);
   }
+}
+
+// cloudflaredのQuick Tunnelは再起動のたびにホスト名が変わり、.envのVIEWER_BASE_URLを
+// 手動更新し忘れると視聴リンクが古いまま投稿されてしまう(実際に発生した障害)。
+// cloudflaredはローカルにmetricsサーバーを立てており(デフォルトで127.0.0.1:20241)、
+// `/quicktunnel` エンドポイントから現在有効なホスト名を都度取得できるため、
+// 配信開始のたびにそちらを優先して使う。取得に失敗した場合のみ.envの値にフォールバックする。
+const quickTunnelMetricsUrl =
+  CLOUDFLARED_METRICS_URL || "http://127.0.0.1:20241/quicktunnel";
+
+async function resolveViewerUrl() {
+  try {
+    const res = await fetch(quickTunnelMetricsUrl, {
+      signal: AbortSignal.timeout(3000),
+    });
+    if (res.ok) {
+      const { hostname } = await res.json();
+      if (hostname) {
+        return `https://${hostname}/pocket3/`;
+      }
+    }
+  } catch (err) {
+    console.error(
+      `cloudflaredのトンネルURL取得に失敗(${err.message})、.envのVIEWER_BASE_URLにフォールバック`
+    );
+  }
+  if (!VIEWER_BASE_URL) {
+    console.error(
+      "cloudflaredのトンネルURLを取得できず、フォールバック用のVIEWER_BASE_URLも未設定です"
+    );
+    return null;
+  }
+  return VIEWER_BASE_URL;
 }
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
@@ -55,7 +88,7 @@ const BATTERY_UPDATE_INTERVAL_MS = 15_000;
 // 初期値は自宅WiFiの電波状況を踏まえた安定寄りの設定(1080p/6000Kbpsのdjictlデフォルトより控えめ)。
 let currentSettings = { resolution: "720p", bitrateKbps: 3000, fps: 30 };
 
-function buildStreamEmbed({ ended }) {
+function buildStreamEmbed({ ended, viewerUrl }) {
   const embed = new EmbedBuilder()
     .setColor(ended ? 0x2f3136 : 0xed4245)
     .setTimestamp(new Date());
@@ -63,7 +96,13 @@ function buildStreamEmbed({ ended }) {
   if (ended) {
     embed.setTitle("⚫ 配信終了");
   } else {
-    embed.setTitle("🔴 配信開始").setDescription(`[視聴ページを開く](${VIEWER_BASE_URL})`);
+    embed
+      .setTitle("🔴 配信開始")
+      .setDescription(
+        viewerUrl
+          ? `[視聴ページを開く](${viewerUrl})`
+          : "(視聴URLの取得に失敗しました。ラズパイのcloudflaredの状態を確認してください)"
+      );
     embed.addFields({
       name: "画質設定",
       value: `${currentSettings.resolution} / ${currentSettings.bitrateKbps}Kbps / ${currentSettings.fps}fps`,
@@ -211,9 +250,10 @@ app.post("/stream-started", async (_req, res) => {
     return;
   }
   try {
+    const viewerUrl = await resolveViewerUrl();
     const channel = await client.channels.fetch(notifyChannelId);
     lastStreamMessage = await channel.send({
-      embeds: [buildStreamEmbed({ ended: false })],
+      embeds: [buildStreamEmbed({ ended: false, viewerUrl })],
     });
 
     clearInterval(batteryUpdateInterval);
@@ -221,7 +261,7 @@ app.post("/stream-started", async (_req, res) => {
       if (!lastStreamMessage) return;
       try {
         await lastStreamMessage.edit({
-          embeds: [buildStreamEmbed({ ended: false })],
+          embeds: [buildStreamEmbed({ ended: false, viewerUrl })],
         });
       } catch (err) {
         console.error("バッテリー表示の更新に失敗:", err);

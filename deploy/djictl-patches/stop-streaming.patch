@@ -1,0 +1,133 @@
+diff --git a/cmd/djictl/main.go b/cmd/djictl/main.go
+index ce7efc8..b199820 100644
+--- a/cmd/djictl/main.go
++++ b/cmd/djictl/main.go
+@@ -4,7 +4,11 @@ import (
+ 	"context"
+ 	"fmt"
+ 	"os"
++	"os/signal"
+ 	"strings"
++	"sync"
++	"syscall"
++	"time"
+ 
+ 	"github.com/facebookincubator/go-belt/tool/logger"
+ 	"github.com/urfave/cli/v2"
+@@ -233,6 +237,27 @@ func main() {
+ 							})
+ 						},
+ 					},
++					{
++						Name:  "stop-streaming",
++						Usage: "Stop an active RTMP live stream on the camera (recovery tool: use when the monitoring process for connect-wifi-and-start-streaming has already exited but the camera is still streaming)",
++						Action: func(c *cli.Context) error {
++							return runOnBLE(c, func(ctx context.Context, dev *djible.Device) error {
++								err := dev.Init(ctx)
++								if err != nil {
++									return fmt.Errorf("unable to initialize: %w", err)
++								}
++								err = dev.AppToWiFiGroundStation().Pair(ctx)
++								if err != nil {
++									return fmt.Errorf("unable to pair: %w", err)
++								}
++								if err := dev.AppToVideoTransmission().StopLiveStream(ctx); err != nil {
++									return fmt.Errorf("unable to stop the live stream: %w", err)
++								}
++								fmt.Println("requested the camera to stop the live stream")
++								return errDone
++							})
++						},
++					},
+ 					{
+ 						Name:  "firmware-version",
+ 						Usage: "Request firmware version [does not work, yet]",
+@@ -318,6 +343,29 @@ func runOnBLE(c *cli.Context, action func(ctx context.Context, dev *djible.Devic
+ 	logger.Debugf(ctx, "log level: %s (raw value: '%s')", loggerLevel, c.String("log-level"))
+ 	filterDeviceAddr := c.String("filter-device-addr")
+ 
++	// SIGTERM/SIGINTでctx自体はキャンセルしない。ctxをキャンセルすると
++	// Scan()が保持しているBLEトランスポート(gatt.Device)ごと切断されてしまい、
++	// 配信中にStopLiveStreamを送ろうとしてもBLE書き込みがcontext deadline exceededで
++	// 失敗する(実機検証で確認済み)。ここではstopRequestedチャンネルで
++	// 「停止要求が来たこと」だけをctx経由で下位に伝え、BLE接続自体は生かしたまま
++	// カメラに停止コマンドを送れるようにする。
++	stopRequested := make(chan struct{})
++	var stopOnce sync.Once
++	sigCh := make(chan os.Signal, 1)
++	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
++	go func() {
++		<-sigCh
++		stopOnce.Do(func() { close(stopRequested) })
++		// ペアリング中などLiveStreamループに到達していない箇所でハングしている場合の
++		// フォールバック。stopRequestedを見ていないコードパスでも一定時間で強制終了する。
++		select {
++		case <-sigCh:
++		case <-time.After(8 * time.Second):
++		}
++		os.Exit(1)
++	}()
++	ctx = djible.WithStopRequested(ctx, stopRequested)
++
+ 	devCh, errCh, err := djible.Scan(ctx)
+ 	if err != nil {
+ 		return fmt.Errorf("unable to start scanning: %w", err)
+@@ -337,6 +385,8 @@ func runOnBLE(c *cli.Context, action func(ctx context.Context, dev *djible.Devic
+ 			}
+ 		case err := <-errCh:
+ 			return err
++		case <-stopRequested:
++			return nil
+ 		case <-ctx.Done():
+ 			return ctx.Err()
+ 		}
+diff --git a/pkg/djible/context_stop.go b/pkg/djible/context_stop.go
+new file mode 100644
+index 0000000..637e857
+--- /dev/null
++++ b/pkg/djible/context_stop.go
+@@ -0,0 +1,19 @@
++package djible
++
++import "context"
++
++// SIGTERM等を受けてもBLEの下位トランスポート(gatt.Device)を握っているctxそのものは
++// キャンセルしない。ctxをキャンセルすると Scan() で作られた gatt.Device ごと切断され、
++// その後に送ろうとするStopLiveStream等のBLE書き込みも失敗するため
++// (実機検証で "context deadline exceeded" として確認済み)。
++// 代わりに「停止要求が来たこと」だけをこのチャンネルで伝える。
++type stopRequestedCtxKey struct{}
++
++func WithStopRequested(ctx context.Context, ch <-chan struct{}) context.Context {
++	return context.WithValue(ctx, stopRequestedCtxKey{}, ch)
++}
++
++func StopRequestedFromContext(ctx context.Context) <-chan struct{} {
++	ch, _ := ctx.Value(stopRequestedCtxKey{}).(<-chan struct{})
++	return ch
++}
+diff --git a/pkg/djible/interface_app_to_video_transmission_start_live_stream.go b/pkg/djible/interface_app_to_video_transmission_start_live_stream.go
+index a9e9d8b..dff1a83 100644
+--- a/pkg/djible/interface_app_to_video_transmission_start_live_stream.go
++++ b/pkg/djible/interface_app_to_video_transmission_start_live_stream.go
+@@ -32,7 +32,20 @@ func (s *InterfaceAppToVideoTransmission) LiveStream(
+ 		return fmt.Errorf("unable to send the message to start the live stream: %w", err)
+ 	}
+ 
++	stopRequested := StopRequestedFromContext(ctx)
+ 	for {
++		select {
++		case <-stopRequested:
++			logger.Infof(ctx, "stop requested; requesting the camera to stop the live stream")
++			if stopErr := s.StopLiveStream(ctx); stopErr != nil {
++				logger.Errorf(ctx, "unable to stop the live stream on the camera: %v", stopErr)
++			} else {
++				logger.Infof(ctx, "requested the camera to stop the live stream")
++			}
++			return nil
++		default:
++		}
++
+ 		msg, err := s.ReceiveMessageLiveStreamResult(ctx)
+ 		if err != nil {
+ 			return fmt.Errorf("unable to receive a response: %w", err)

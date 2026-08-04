@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=<your-user>
-ExecStart=/usr/local/bin/cloudflared tunnel --url http://localhost:8888
+ExecStart=/usr/local/bin/cloudflared tunnel --url http://localhost:8888 --metrics localhost:20241
 Restart=on-failure
 RestartSec=5
 

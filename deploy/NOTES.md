@@ -117,12 +117,16 @@ ssh raspi "curl -sL -o /tmp/cloudflared https://github.com/cloudflare/cloudflare
 MediaMTXはHLSポート(8888)で `/<path名>/` にアクセスすると**自動生成のプレーヤーページ**を
 返してくれるため、`viewer/index.html` を別途ホストする必要はない
 (このリポジトリの `viewer/index.html` はカスタマイズしたくなった時の参考実装として残してある)。
-`VIEWER_BASE_URL` は `https://<発行されたホスト名>.trycloudflare.com/pocket3/` を設定する。
 
-**既知の制限**: Quick TunnelのURLは`cloudflared`再起動のたびに変わる。サービスが再起動したら
-`sudo journalctl -u cloudflared.service | grep trycloudflare.com` で新URLを確認し、
-`bot/.env` の `VIEWER_BASE_URL` を更新して `dji-cam-bot.service` を再起動する必要がある。
-URLを固定したい場合は独自ドメインをCloudflareに登録してnamed tunnelに切り替える(将来対応)。
+**Quick TunnelのURLは`cloudflared`再起動のたびに変わる**が、`.env`を手動更新する運用は
+実際に更新を忘れて古いURLのまま投稿される障害を起こした(2026-08-04)。そのため
+Bot側は起動時ではなく配信開始のたびに、cloudflaredのローカルmetricsサーバー
+(`deploy/cloudflared.service` で `--metrics localhost:20241` を指定)の
+`http://127.0.0.1:20241/quicktunnel` から現在有効なホスト名を自動取得する
+(`bot/index.js` の `resolveViewerUrl()`)。`.env`の`VIEWER_BASE_URL`はこの取得に
+失敗した場合のフォールバック用途のみで、通常は空でよい。
+URLそのものを固定したい場合は独自ドメインをCloudflareに登録してnamed tunnelに
+切り替える(将来対応、上記の自動取得があれば必須ではない)。
 
 ## 5. systemd化
 
@@ -138,7 +142,10 @@ ssh raspi "sudo journalctl -u mediamtx.service -u dji-cam-bot.service -u cloudfl
 
 - Discordで `/cam start` → 数秒〜十数秒後にカメラがWiFi接続・配信開始し、Botが自動で
   視聴リンク付きembedをチャンネルに投稿する。
-- `/cam stop` → 配信制御プロセス(djictl)を停止する。
+- `/cam stop` → カメラにBLE経由で配信停止を指示してから配信制御プロセス(djictl)を終了する
+  (`deploy/djictl-patches/` 参照。カメラが実際に配信を止めるところまで実機確認済み)。
+  もし監視プロセスだけが落ちてカメラだけ配信し続けている場合は
+  `djictl ble --filter-device-addr <addr> stop-streaming` で個別に止められる。
 
 ## 以後の更新デプロイ
 
