@@ -84,6 +84,20 @@ let batteryUpdateInterval = null;
 
 const BATTERY_UPDATE_INTERVAL_MS = 15_000;
 
+// djictlはカメラからのBLE応答をブロッキングで待ち続ける実装のため、WiFi/BLE接続が
+// 切れても検知できず無限にハングすることがある(実際に19時間ハングした事例あり、
+// 別のケースではペアリング段階で9分ハングした事例もある)。ログ出力(=カメラとの
+// 通信)が一定時間途絶えたら通信断とみなし、プロセスを自動的に停止する。
+// 配信開始後はテレメトリが毎秒流れる前提で短い閾値、それ以前(WiFi接続待ち等)は
+// ログ間隔が空くことがあるため長めの閾値を使う。
+let lastOutputAt = null;
+let streamingStarted = false;
+let watchdogTriggered = false;
+let watchdogInterval = null;
+const WATCHDOG_CHECK_INTERVAL_MS = 5_000;
+const WATCHDOG_STARTUP_SILENCE_MS = 90_000;
+const WATCHDOG_STREAMING_SILENCE_MS = 20_000;
+
 // 画質設定。/cam start でオプション指定が無ければこの値(前回値)を使う。
 // 初期値は自宅WiFiの電波状況を踏まえた安定寄りの設定(1080p/6000Kbpsのdjictlデフォルトより控えめ)。
 let currentSettings = { resolution: "720p", bitrateKbps: 3000, fps: 30 };
@@ -154,6 +168,11 @@ function startCameraStream() {
 
   lastBatteryPercent = null;
   cameraProcess = child;
+  lastOutputAt = Date.now();
+  streamingStarted = false;
+  watchdogTriggered = false;
+  clearInterval(watchdogInterval);
+  watchdogInterval = setInterval(checkWatchdog, WATCHDOG_CHECK_INTERVAL_MS);
 
   // djictlはINFO/DEBUログをstdoutではなくstderrに出力する(実機確認済み)。
   // どちらに出ても拾えるよう両方のストリームでバッテリー行を解析する。
@@ -161,9 +180,11 @@ function startCameraStream() {
     const text = buf.toString();
     const log = streamName === "stderr" ? console.error : console.log;
     log(`[djictl] ${text}`.trimEnd());
+    lastOutputAt = Date.now();
     const match = text.match(BATTERY_LINE_RE);
     if (match) {
       lastBatteryPercent = Number(match[1]);
+      streamingStarted = true;
     }
   };
   child.stdout.on("data", (buf) => handleOutput("stdout", buf));
@@ -171,6 +192,8 @@ function startCameraStream() {
   child.on("exit", (code, signal) => {
     console.log(`[djictl] 終了 code=${code} signal=${signal}`);
     cameraProcess = null;
+    clearInterval(watchdogInterval);
+    watchdogInterval = null;
   });
 
   return new Promise((resolve, reject) => {
@@ -180,6 +203,32 @@ function startCameraStream() {
       reject(err);
     });
   });
+}
+
+async function checkWatchdog() {
+  if (!cameraProcess || lastOutputAt === null || watchdogTriggered) return;
+  const silenceMs = Date.now() - lastOutputAt;
+  const limit = streamingStarted
+    ? WATCHDOG_STREAMING_SILENCE_MS
+    : WATCHDOG_STARTUP_SILENCE_MS;
+  if (silenceMs < limit) return;
+
+  watchdogTriggered = true;
+  console.error(
+    `[djictl] ${Math.round(silenceMs / 1000)}秒間カメラからの応答がないため、ハングとみなしてプロセスを自動停止します`
+  );
+  await stopCameraStream();
+
+  if (notifyChannelId) {
+    try {
+      const channel = await client.channels.fetch(notifyChannelId);
+      await channel.send(
+        "⚠️ カメラからの応答が一定時間なかったため、配信監視プロセスを自動的に停止しました。ネットワーク状況を確認のうえ、再度 `/cam start` をお試しください。"
+      );
+    } catch (err) {
+      console.error("ウォッチドッグ通知の送信に失敗:", err);
+    }
+  }
 }
 
 // djictl(パッチ済み)はSIGTERM受信後、カメラへBLEで配信停止コマンドを送ってから
