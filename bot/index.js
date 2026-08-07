@@ -182,12 +182,28 @@ function startCameraStream() {
   });
 }
 
+// djictl(パッチ済み)はSIGTERM受信後、カメラへBLEで配信停止コマンドを送ってから
+// 終了する(最大8秒程度かかる、deploy/djictl-patches/README.md参照)。
+// そのため実際の終了を待たずに「停止しました」と返信すると、その数秒の間に
+// /cam start を叩いたユーザーが「まだ配信中/指示中です」の誤解を招くエラーに
+// 遭遇してしまう(実際に発生した問い合わせ)。ここで実終了を待ってから返信する。
+const STOP_WAIT_TIMEOUT_MS = 10_000;
+
 function stopCameraStream() {
   if (!cameraProcess) {
-    return false;
+    return Promise.resolve({ wasRunning: false, exited: false });
   }
-  cameraProcess.kill("SIGTERM");
-  return true;
+  const proc = cameraProcess;
+  proc.kill("SIGTERM");
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      resolve({ wasRunning: true, exited: false });
+    }, STOP_WAIT_TIMEOUT_MS);
+    proc.once("exit", () => {
+      clearTimeout(timer);
+      resolve({ wasRunning: true, exited: true });
+    });
+  });
 }
 
 client.on("interactionCreate", async (interaction) => {
@@ -223,12 +239,17 @@ client.on("interactionCreate", async (interaction) => {
 
   if (sub === "stop") {
     await interaction.deferReply();
-    const stopped = stopCameraStream();
-    await interaction.editReply(
-      stopped
-        ? "配信プロセスを停止しました。"
-        : "現在、配信指示中/配信中のプロセスはありません。"
-    );
+    const { wasRunning, exited } = await stopCameraStream();
+    let message;
+    if (!wasRunning) {
+      message = "現在、配信指示中/配信中のプロセスはありません。";
+    } else if (exited) {
+      message = "配信プロセスを停止しました。";
+    } else {
+      message =
+        "停止コマンドを送信しましたが、カメラへの応答待ちで完全な停止確認までは至りませんでした。もう少し待ってから /cam start をお試しください。";
+    }
+    await interaction.editReply(message);
     return;
   }
 });
