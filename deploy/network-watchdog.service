@@ -1,0 +1,8 @@
+[Unit]
+Description=Network watchdog (wlan0 auto-recovery for dji-cam-discord host)
+After=network.target
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/home/<your-user>/dji-cam-discord/bin/network-watchdog.sh

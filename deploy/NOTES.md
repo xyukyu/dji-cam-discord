@@ -75,6 +75,23 @@ djictl ble --filter-device-addr <addr> connect-wifi-and-start-streaming \
 **カメラ本体も電源を入れ直す**とだいたい復旧する
 ([xaionaro-go/djictl issue #4](https://github.com/xaionaro-go/djictl/issues/4) と同種の既知の症状)。
 
+### ハマったポイント: `found device` 直後で毎回接続が切れる場合はラズパイ本体の再起動が必要(2026-08-22)
+
+`requesting to pair` にすら到達せず、`found device...initializing` の直後、最初のGATTリクエスト
+送信直後に接続そのものが切れる(`--log-level trace` で見るとHCIの Disconnection Complete イベント、
+理由コード `0x3E` が確認できる)場合は、上記の「rfkill off/on + カメラ再起動」では直らないことがある。
+
+**発生の経緯:** BLE/テレメトリ無応答を検知する自動停止watchdog(コミット `417d441`)が発火した際、
+その時点で既にBLEリンクが切れていたため、SIGTERM経由の「カメラへ配信停止コマンドを送る」処理が
+実際にはカメラへ届かないまま強制終了していた。これが引き金でラズパイ側Bluetoothコントローラの
+内部状態が不整合になり、以後の接続が全て `found device` 直後で切断されるようになった
+(カメラ本体の電源再投入・工場出荷設定リセットでも直らなかった)。
+
+**対処:** `sudo systemctl restart bluetooth`(デーモン再起動)では直らない。
+**`sudo reboot` でラズパイ本体を再起動する**とBluetoothコントローラごとリセットされ復旧する。
+再起動後は `djictl ble --filter-device-addr <addr> battery-info` 等の軽量コマンドで
+接続が維持できる(テレメトリを継続受信できる)ことを確認してから `/cam start` を試すとよい。
+
 ## 2. MediaMTX の導入
 
 ```
@@ -152,3 +169,34 @@ ssh raspi "sudo journalctl -u mediamtx.service -u dji-cam-bot.service -u cloudfl
 `discord-bots/gcalcord/CLAUDE.md` の「デプロイ運用」と同じ方針に従う:
 本番ファイルをバックアップ → scpで反映 → 構文チェック(`node --check`) →
 `sudo systemctl restart <service>` → `journalctl` でエラー確認。
+
+## 6. ネットワークwatchdog(2026-08-17導入)
+
+**背景:** 2026-08-15 23:30頃、オンボードWiFi(brcmfmac、SDIO接続)がSDIOバスエラー
+(`CMD53 sg block write failed -110` / `HW header checksum error`)を起こし始め、
+以後 `scan error (-110)` が延々と繰り返されて約22時間ネットワークが完全無応答になった
+(CPU/メモリ/温度/under-voltageは正常で、ラズパイ本体ではなくWiFi周りの障害と判明)。
+過去の頻繁な再起動(6/12, 6/16, 6/22, 8/4, 8/9等)も同種の可能性がある。
+現在の接続は5GHz帯・信号強度55%とやや弱め。根本対策は**有線LANへの切り替え**
+(`eth0`は存在するが未接続)だが、暫定策として自動復旧watchdogを導入した。
+
+**仕組み(`bin/network-watchdog.sh` + `network-watchdog.timer`、2分間隔で実行):**
+- デフォルトゲートウェイへのpingで疎通確認
+- 連続失敗2回(約4分)で `nmcli device disconnect/connect wlan0` によるソフト復旧を試行
+- 連続失敗5回(約10分)で `systemctl reboot`(ただし直近の再起動から1時間未満ならクールダウンとして見送り、ブートループを防止)
+
+**デプロイ手順:**
+```
+scp "d:\dev\dji-cam-discord\deploy\network-watchdog.sh" raspi:/tmp/
+scp "d:\dev\dji-cam-discord\deploy\network-watchdog.service" "d:\dev\dji-cam-discord\deploy\network-watchdog.timer" raspi:/tmp/
+ssh raspi "sed -i 's#<your-user>#yukyu#g' /tmp/network-watchdog.service"
+ssh raspi "mv /tmp/network-watchdog.sh /home/yukyu/dji-cam-discord/bin/network-watchdog.sh && chmod +x /home/yukyu/dji-cam-discord/bin/network-watchdog.sh"
+ssh raspi "sudo mv /tmp/network-watchdog.service /tmp/network-watchdog.timer /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now network-watchdog.timer"
+```
+
+**動作確認・トラブルシュート:**
+```
+ssh raspi "systemctl status network-watchdog.timer --no-pager"
+ssh raspi "sudo journalctl -u network-watchdog.service --no-pager -n 50"
+```
+自動リブートが発生した形跡は `journalctl -u network-watchdog.service | grep 再起動` で確認できる。
