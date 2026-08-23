@@ -410,6 +410,44 @@ publicApp.get("/api/status", (_req, res) => {
   });
 });
 
+// パスワードの正誤だけを確認する(操作パネルの「ロック解除」表示を確定させるため)。
+// 副作用は一切なし。
+publicApp.post("/api/cam/verify-password", (req, res) => {
+  const { password } = req.body || {};
+  if (!isControlPasswordValid(password)) {
+    res.status(401).json({ error: "パスワードが正しくありません" });
+    return;
+  }
+  res.json({ ok: true });
+});
+
+// 画質設定を変更するAPI。配信中でなければ設定を保存するだけ(次回開始時に使う)。
+// djictlは配信中の画質変更に対応していないため、配信中の場合は一度停止してから
+// 新しい設定で再度開始する(その間、数秒〜数十秒映像が途切れる)。
+publicApp.post("/api/cam/settings", async (req, res) => {
+  const { password, resolution, bitrateKbps, fps } = req.body || {};
+  if (!isControlPasswordValid(password)) {
+    res.status(401).json({ error: "パスワードが正しくありません" });
+    return;
+  }
+  if (resolution) currentSettings.resolution = resolution;
+  if (bitrateKbps) currentSettings.bitrateKbps = Number(bitrateKbps);
+  if (fps) currentSettings.fps = Number(fps);
+
+  if (!cameraProcess) {
+    res.json({ ok: true, restarted: false, settings: currentSettings });
+    return;
+  }
+
+  try {
+    await stopCameraStream();
+    await startCameraStream();
+    res.json({ ok: true, restarted: true, settings: currentSettings });
+  } catch (err) {
+    res.status(409).json({ error: err.message });
+  }
+});
+
 publicApp.post("/api/cam/start", async (req, res) => {
   const { password, resolution, bitrateKbps, fps } = req.body || {};
   if (!isControlPasswordValid(password)) {

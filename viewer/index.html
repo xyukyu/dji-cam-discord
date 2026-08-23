@@ -176,7 +176,7 @@
   }
   .panel.open .panel-body { display: flex; }
 
-  .field-row { display: flex; gap: 8px; }
+  .field-row { display: flex; gap: 8px; align-items: center; }
   input[type="password"], select {
     background: var(--surface-2);
     border: 1px solid var(--border);
@@ -199,8 +199,39 @@
   .btn-primary { background: var(--accent); color: #fff; }
   .btn-secondary { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); }
 
+  /* --- ロック状態表示 --- */
+  .lock-status {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-dim);
+    white-space: nowrap;
+  }
+  .lock-status.unlocked { color: var(--ok); }
+  .lock-row.unlocked .lock-input,
+  .lock-row.unlocked #unlockBtn { display: none; }
+  .lock-row:not(.unlocked) #relockBtn { display: none; }
+
   .settings-row { display: flex; gap: 8px; flex-wrap: wrap; }
   .settings-row select { flex: 1; min-width: 100px; }
+  .settings-row select:disabled { opacity: 0.5; }
+
+  .apply-row { display: flex; align-items: center; gap: 10px; }
+  .pending-badge {
+    font-size: 12px;
+    color: #f5b942;
+    display: none;
+    align-items: center;
+    gap: 4px;
+  }
+  .pending-badge.show { display: inline-flex; }
+  .pending-badge .dot2 {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: #f5b942;
+  }
+
   .actions-row { display: flex; gap: 8px; }
   .actions-row .btn { flex: 1; }
 
@@ -253,27 +284,34 @@
         <span class="chev">▾</span>
       </button>
       <div class="panel-body">
-        <div class="field-row">
-          <input type="password" id="password" placeholder="操作用パスワード">
-          <button class="btn btn-secondary" id="lockBtn">ロック解除</button>
+        <div class="field-row lock-row" id="lockRow">
+          <span class="lock-status" id="lockStatus">🔒 ロック中</span>
+          <input type="password" id="password" class="lock-input" placeholder="操作用パスワード">
+          <button class="btn btn-secondary" id="unlockBtn">ロック解除</button>
+          <button class="btn btn-secondary" id="relockBtn">ロックする</button>
         </div>
 
         <div class="settings-row">
-          <select id="resolution">
+          <select id="resolution" disabled>
             <option value="480p">480p</option>
             <option value="720p" selected>720p</option>
             <option value="1080p">1080p</option>
           </select>
-          <select id="bitrateKbps">
+          <select id="bitrateKbps" disabled>
             <option value="1500">1500 Kbps</option>
             <option value="3000" selected>3000 Kbps</option>
             <option value="6000">6000 Kbps</option>
             <option value="8000">8000 Kbps</option>
           </select>
-          <select id="fps">
+          <select id="fps" disabled>
             <option value="25">25 fps</option>
             <option value="30" selected>30 fps</option>
           </select>
+        </div>
+
+        <div class="apply-row">
+          <span class="pending-badge" id="pendingBadge"><span class="dot2"></span>未適用の変更があります</span>
+          <button class="btn btn-secondary" id="applyBtn" disabled>設定を適用</button>
         </div>
 
         <div class="actions-row">
@@ -386,18 +424,47 @@
     var subStatus = document.getElementById("subStatus");
     var startBtn = document.getElementById("startBtn");
     var stopBtn = document.getElementById("stopBtn");
+    var applyBtn = document.getElementById("applyBtn");
+    var pendingBadge = document.getElementById("pendingBadge");
     var resolutionSel = document.getElementById("resolution");
     var bitrateSel = document.getElementById("bitrateKbps");
     var fpsSel = document.getElementById("fps");
 
     var lastLive = null;
-    var editingSettings = false;
+    var lastStatus = { live: false, starting: false };
+    // サーバー側に実際に反映されている(=適用済みの)画質設定。
+    // セレクトの現在値とズレていたら「未適用の変更」として扱う。
+    var appliedSettings = { resolution: "720p", bitrateKbps: 3000, fps: 30 };
+
+    function isPendingChange() {
+      return (
+        resolutionSel.value !== appliedSettings.resolution ||
+        Number(bitrateSel.value) !== appliedSettings.bitrateKbps ||
+        Number(fpsSel.value) !== appliedSettings.fps
+      );
+    }
+
+    function updateActionButtons() {
+      var s = lastStatus;
+      var lockedHint = unlocked ? "" : "先にパスワードでロック解除してください";
+      startBtn.disabled = !unlocked || s.live || s.starting;
+      stopBtn.disabled = !unlocked || (!s.live && !s.starting);
+      startBtn.title = lockedHint;
+      stopBtn.title = lockedHint;
+
+      var pending = isPendingChange();
+      pendingBadge.classList.toggle("show", pending);
+      applyBtn.disabled = !unlocked || !pending || s.starting;
+      applyBtn.title = lockedHint;
+    }
     [resolutionSel, bitrateSel, fpsSel].forEach(function (el) {
-      el.addEventListener("focus", function () { editingSettings = true; });
-      el.addEventListener("blur", function () { editingSettings = false; });
+      el.addEventListener("change", updateActionButtons);
     });
 
     function applyStatus(s) {
+      var wasPending = isPendingChange();
+      lastStatus = s;
+
       liveBadge.classList.toggle("offline", !s.live);
       liveBadgeText.textContent = s.live ? "LIVE" : (s.starting ? "接続中..." : "OFFLINE");
       controlsStatus.textContent = s.live ? "配信中" : (s.starting ? "カメラに接続しています..." : "配信していません");
@@ -410,14 +477,17 @@
         batteryBadge.style.display = "none";
       }
 
-      if (!editingSettings && s.settings) {
-        resolutionSel.value = s.settings.resolution;
-        bitrateSel.value = String(s.settings.bitrateKbps);
-        fpsSel.value = String(s.settings.fps);
+      if (s.settings) {
+        appliedSettings = s.settings;
+        // ユーザーが未適用の変更を選択中でなければ、サーバーの現在値に追従させる
+        if (!wasPending) {
+          resolutionSel.value = appliedSettings.resolution;
+          bitrateSel.value = String(appliedSettings.bitrateKbps);
+          fpsSel.value = String(appliedSettings.fps);
+        }
       }
 
-      startBtn.disabled = s.live || s.starting;
-      stopBtn.disabled = !s.live && !s.starting;
+      updateActionButtons();
 
       if (s.live && lastLive === false) {
         // 停止していたところから配信が始まった: HLSを読み込み直す
@@ -442,29 +512,93 @@
     var panelToggle = document.getElementById("panelToggle");
     var panelMsg = document.getElementById("panelMsg");
     var passwordInput = document.getElementById("password");
-    var lockBtn = document.getElementById("lockBtn");
+    var lockRow = document.getElementById("lockRow");
+    var lockStatus = document.getElementById("lockStatus");
+    var unlockBtn = document.getElementById("unlockBtn");
+    var relockBtn = document.getElementById("relockBtn");
 
     panelToggle.addEventListener("click", function () {
       panel.classList.toggle("open");
     });
-
-    var storedPassword = null;
-    try { storedPassword = localStorage.getItem("camControlPassword"); } catch (e) {}
-    if (storedPassword) passwordInput.value = storedPassword;
 
     function setPanelMsg(text, kind) {
       panelMsg.textContent = text || "";
       panelMsg.className = "msg" + (kind ? " " + kind : "");
     }
 
-    lockBtn.addEventListener("click", function () {
-      try { localStorage.setItem("camControlPassword", passwordInput.value); } catch (e) {}
-      setPanelMsg("パスワードを記憶しました。操作ボタンを押すと反映されます。", "ok");
-    });
+    // --- ロック状態(パスワードが実際にサーバーで検証済みかどうかを明示する) ---
+    var unlocked = false;
+
+    function setLocked(isUnlocked) {
+      unlocked = isUnlocked;
+      lockRow.classList.toggle("unlocked", isUnlocked);
+      lockStatus.classList.toggle("unlocked", isUnlocked);
+      lockStatus.textContent = isUnlocked ? "🔓 解除済み" : "🔒 ロック中";
+      resolutionSel.disabled = !isUnlocked;
+      bitrateSel.disabled = !isUnlocked;
+      fpsSel.disabled = !isUnlocked;
+      updateActionButtons();
+    }
+
+    function verifyPassword(pw) {
+      return fetch("/api/cam/verify-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: pw }),
+      }).then(function (r) {
+        return r.json().then(function (data) {
+          return { success: r.ok, data: data };
+        });
+      });
+    }
 
     function currentPassword() {
       return passwordInput.value || "";
     }
+
+    var storedPassword = null;
+    try { storedPassword = localStorage.getItem("camControlPassword"); } catch (e) {}
+    if (storedPassword) {
+      passwordInput.value = storedPassword;
+      // ページ読み込み時に実際にサーバーへ確認し、鍵アイコンの状態を事実に一致させる
+      verifyPassword(storedPassword).then(function (result) {
+        if (result.success) setLocked(true);
+      }).catch(function () {});
+    }
+
+    unlockBtn.addEventListener("click", function () {
+      var pw = currentPassword();
+      if (!pw) {
+        setPanelMsg("パスワードを入力してください", "error");
+        return;
+      }
+      unlockBtn.disabled = true;
+      setPanelMsg("パスワードを確認しています...");
+      verifyPassword(pw).then(function (result) {
+        unlockBtn.disabled = false;
+        if (result.success) {
+          try { localStorage.setItem("camControlPassword", pw); } catch (e) {}
+          setLocked(true);
+          setPanelMsg("ロックを解除しました。", "ok");
+        } else {
+          setLocked(false);
+          setPanelMsg(result.data.error || "パスワードが正しくありません", "error");
+        }
+      }).catch(function () {
+        unlockBtn.disabled = false;
+        setPanelMsg("確認に失敗しました(通信エラー)", "error");
+      });
+    });
+    passwordInput.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") unlockBtn.click();
+    });
+
+    relockBtn.addEventListener("click", function () {
+      try { localStorage.removeItem("camControlPassword"); } catch (e) {}
+      passwordInput.value = "";
+      setLocked(false);
+      setPanelMsg("ロックしました。", "");
+    });
 
     function callApi(path, body) {
       return fetch(path, {
@@ -504,6 +638,36 @@
       callApi("/api/cam/stop", { password: currentPassword() })
         .then(function () {
           setPanelMsg("配信を停止しました。", "ok");
+          pollStatus();
+        })
+        .catch(function (err) {
+          setPanelMsg(err.message, "error");
+          pollStatus();
+        });
+    });
+
+    applyBtn.addEventListener("click", function () {
+      setPanelMsg("設定を適用しています...");
+      applyBtn.disabled = true;
+      var next = {
+        resolution: resolutionSel.value,
+        bitrateKbps: Number(bitrateSel.value),
+        fps: Number(fpsSel.value),
+      };
+      callApi("/api/cam/settings", {
+        password: currentPassword(),
+        resolution: next.resolution,
+        bitrateKbps: next.bitrateKbps,
+        fps: next.fps,
+      })
+        .then(function (data) {
+          appliedSettings = next;
+          setPanelMsg(
+            data.restarted
+              ? "設定を適用し、配信を再起動しました(数秒映像が途切れます)。"
+              : "設定を保存しました(次回の配信開始時に使用されます)。",
+            "ok"
+          );
           pollStatus();
         })
         .catch(function (err) {
