@@ -1,6 +1,7 @@
 require("dotenv").config();
 const { spawn } = require("child_process");
 const http = require("http");
+const net = require("net");
 const path = require("path");
 const crypto = require("crypto");
 const express = require("express");
@@ -108,6 +109,34 @@ const WATCHDOG_STREAMING_SILENCE_MS = 20_000;
 // 初期値は自宅WiFiの電波状況を踏まえた安定寄りの設定(1080p/6000Kbpsのdjictlデフォルトより控えめ)。
 let currentSettings = { resolution: "720p", bitrateKbps: 3000, fps: 30 };
 
+// ジンバル操作(実験的機能)。djictl(gimbal-control-socket.patch適用済み)が
+// 配信中にリッスンするUnixソケットのパス。Botはこのソケットへ改行区切りJSONを
+// 書き込むことでジンバルへ速度制御コマンドを中継する(BLE接続自体はBotではなく
+// djictlが握ったままにする、詳細はdeploy/djictl-patches/README.md参照)。
+// プロトコルはコミュニティのリバースエンジニアリング成果を移植したもので、
+// 実機で本当に動くかは未検証。
+const GIMBAL_SOCKET_PATH =
+  process.env.GIMBAL_SOCKET_PATH || "/tmp/dji-cam-gimbal-control.sock";
+
+function sendGimbalCommand(pitchDegPerSec, rollDegPerSec, yawDegPerSec) {
+  return new Promise((resolve, reject) => {
+    const socket = net.createConnection(GIMBAL_SOCKET_PATH);
+    socket.setTimeout(2000);
+    socket.once("connect", () => {
+      socket.end(
+        JSON.stringify({
+          PitchDegPerSec: pitchDegPerSec,
+          RollDegPerSec: rollDegPerSec,
+          YawDegPerSec: yawDegPerSec,
+        }) + "\n"
+      );
+    });
+    socket.once("close", () => resolve());
+    socket.once("error", reject);
+    socket.once("timeout", () => socket.destroy(new Error("タイムアウト")));
+  });
+}
+
 // MediaMTXのwebhook(runOnAvailable/runOnUnavailable)から見た実際のRTMP配信状態。
 // 視聴ページの状態表示・操作パネルの活性制御に使う(djictlプロセスの有無とは別軸)。
 let isLive = false;
@@ -183,6 +212,8 @@ function startCameraStream() {
       String(currentSettings.bitrateKbps),
       "--fps",
       String(currentSettings.fps),
+      "--control-socket",
+      GIMBAL_SOCKET_PATH,
     ],
     { stdio: ["ignore", "pipe", "pipe"] }
   );
@@ -286,13 +317,6 @@ client.on("interactionCreate", async (interaction) => {
   if (sub === "start") {
     await interaction.deferReply();
     notifyChannelId = interaction.channelId;
-
-    const resolution = interaction.options.getString("resolution");
-    const bitrateKbps = interaction.options.getInteger("bitrate_kbps");
-    const fps = interaction.options.getInteger("fps");
-    if (resolution) currentSettings.resolution = resolution;
-    if (bitrateKbps) currentSettings.bitrateKbps = bitrateKbps;
-    if (fps) currentSettings.fps = fps;
 
     try {
       await startCameraStream();
@@ -462,6 +486,29 @@ publicApp.post("/api/cam/start", async (req, res) => {
     res.json({ ok: true, settings: currentSettings });
   } catch (err) {
     res.status(409).json({ error: err.message });
+  }
+});
+
+// ジンバル操作API(実験的機能)。配信中(djictlがカメラとのBLE接続を握っている間)
+// のみ中継できる。プロトコルは未確認のリバースエンジニアリング成果を移植したもので、
+// 実機で本当にジンバルが動くかは検証中(deploy/djictl-patches/README.md参照)。
+publicApp.post("/api/cam/gimbal", async (req, res) => {
+  const { password, pitch, roll, yaw } = req.body || {};
+  if (!isControlPasswordValid(password)) {
+    res.status(401).json({ error: "パスワードが正しくありません" });
+    return;
+  }
+  if (!cameraProcess) {
+    res.status(409).json({ error: "配信中ではありません" });
+    return;
+  }
+  try {
+    await sendGimbalCommand(Number(pitch) || 0, Number(roll) || 0, Number(yaw) || 0);
+    res.json({ ok: true });
+  } catch (err) {
+    res
+      .status(502)
+      .json({ error: `ジンバル制御ソケットへの送信に失敗: ${err.message}` });
   }
 });
 

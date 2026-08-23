@@ -238,6 +238,46 @@
   .msg { font-size: 13px; min-height: 18px; }
   .msg.error { color: #f28b82; }
   .msg.ok { color: var(--ok); }
+
+  /* --- ジンバル操作(実験的機能) --- */
+  .gimbal-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-top: 4px;
+    border-top: 1px solid var(--border);
+  }
+  .gimbal-header {
+    font-size: 13px;
+    color: var(--text-dim);
+  }
+  .dpad {
+    display: grid;
+    grid-template-columns: repeat(3, 48px);
+    grid-template-rows: repeat(3, 48px);
+    grid-template-areas:
+      ".    up    ."
+      "left .     right"
+      ".    down  .";
+    gap: 4px;
+    justify-content: center;
+  }
+  .dpad-up { grid-area: up; }
+  .dpad-left { grid-area: left; }
+  .dpad-right { grid-area: right; }
+  .dpad-down { grid-area: down; }
+  .dpad-btn {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 8px;
+    font-size: 18px;
+    cursor: pointer;
+    touch-action: none;
+    user-select: none;
+  }
+  .dpad-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .dpad-btn:not(:disabled):active { background: var(--accent-dim); }
 </style>
 </head>
 <body>
@@ -320,6 +360,20 @@
         </div>
 
         <div class="msg" id="panelMsg"></div>
+
+        <!-- BLE経由のジンバル制御コマンドは配信中でもカメラに無視されることを実機検証済み
+             (2026-08-23、deploy/djictl-patches/README.md参照)。動作しない機能をユーザーに
+             見せないよう非表示にしている。Mimoアプリの通信解析で正しい経路が分かれば復活させる。 -->
+        <div class="gimbal-panel" style="display: none;">
+          <div class="gimbal-header">🎮 ジンバル操作(実験的機能・配信中のみ。実機で動かない場合があります)</div>
+          <div class="dpad">
+            <button class="dpad-btn dpad-up" data-pitch="20" data-yaw="0" disabled title="上">▲</button>
+            <button class="dpad-btn dpad-left" data-pitch="0" data-yaw="-30" disabled title="左">◀</button>
+            <button class="dpad-btn dpad-right" data-pitch="0" data-yaw="30" disabled title="右">▶</button>
+            <button class="dpad-btn dpad-down" data-pitch="-20" data-yaw="0" disabled title="下">▼</button>
+          </div>
+          <div class="msg" id="gimbalMsg"></div>
+        </div>
       </div>
     </div>
   </div>
@@ -429,6 +483,7 @@
     var resolutionSel = document.getElementById("resolution");
     var bitrateSel = document.getElementById("bitrateKbps");
     var fpsSel = document.getElementById("fps");
+    var gimbalButtons = document.querySelectorAll(".dpad-btn");
 
     var lastLive = null;
     var lastStatus = { live: false, starting: false };
@@ -456,6 +511,10 @@
       pendingBadge.classList.toggle("show", pending);
       applyBtn.disabled = !unlocked || !pending || s.starting;
       applyBtn.title = lockedHint;
+
+      // ジンバル操作は実際にBLE配信ループが回っている(=live確定後)場合のみ有効にする
+      var gimbalEnabled = unlocked && s.live;
+      gimbalButtons.forEach(function (btn) { btn.disabled = !gimbalEnabled; });
     }
     [resolutionSel, bitrateSel, fpsSel].forEach(function (el) {
       el.addEventListener("change", updateActionButtons);
@@ -674,6 +733,51 @@
           setPanelMsg(err.message, "error");
           pollStatus();
         });
+    });
+
+    // --- ジンバル操作(実験的機能) ---
+    var gimbalMsg = document.getElementById("gimbalMsg");
+    var gimbalInterval = null;
+    var GIMBAL_SEND_INTERVAL_MS = 200;
+
+    function sendGimbal(pitch, roll, yaw) {
+      return callApi("/api/cam/gimbal", {
+        password: currentPassword(),
+        pitch: pitch,
+        roll: roll,
+        yaw: yaw,
+      });
+    }
+
+    function startGimbalHold(pitch, yaw) {
+      stopGimbalHold();
+      sendGimbal(pitch, 0, yaw)
+        .then(function () { gimbalMsg.textContent = ""; })
+        .catch(function (err) { gimbalMsg.textContent = err.message; });
+      gimbalInterval = setInterval(function () {
+        sendGimbal(pitch, 0, yaw).catch(function () {});
+      }, GIMBAL_SEND_INTERVAL_MS);
+    }
+
+    function stopGimbalHold() {
+      if (gimbalInterval) {
+        clearInterval(gimbalInterval);
+        gimbalInterval = null;
+        sendGimbal(0, 0, 0).catch(function () {});
+      }
+    }
+
+    gimbalButtons.forEach(function (btn) {
+      var pitch = Number(btn.dataset.pitch);
+      var yaw = Number(btn.dataset.yaw);
+      btn.addEventListener("pointerdown", function (e) {
+        if (btn.disabled) return;
+        e.preventDefault();
+        startGimbalHold(pitch, yaw);
+      });
+      ["pointerup", "pointerleave", "pointercancel"].forEach(function (evt) {
+        btn.addEventListener(evt, stopGimbalHold);
+      });
     });
   </script>
 </body>

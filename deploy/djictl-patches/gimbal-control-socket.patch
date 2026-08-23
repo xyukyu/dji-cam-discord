@@ -1,0 +1,309 @@
+diff --git a/cmd/djictl/main.go b/cmd/djictl/main.go
+index b199820..2ca1a04 100644
+--- a/cmd/djictl/main.go
++++ b/cmd/djictl/main.go
+@@ -2,7 +2,9 @@ package main
+ 
+ import (
+ 	"context"
++	"encoding/json"
+ 	"fmt"
++	"net"
+ 	"os"
+ 	"os/signal"
+ 	"strings"
+@@ -86,6 +88,11 @@ func main() {
+ 								Usage: "frames per second (allowed values: 25, 30)",
+ 								Value: 30,
+ 							},
++							&cli.StringFlag{
++								Name:  "control-socket",
++								Usage: "Unix domain socket path to receive live gimbal control commands from an external process while streaming (optional)",
++								Value: "",
++							},
+ 						},
+ 						Action: func(c *cli.Context) error {
+ 							return runOnBLE(c, func(ctx context.Context, dev *djible.Device) error {
+@@ -366,6 +373,14 @@ func runOnBLE(c *cli.Context, action func(ctx context.Context, dev *djible.Devic
+ 	}()
+ 	ctx = djible.WithStopRequested(ctx, stopRequested)
+ 
++	if controlSocketPath := c.String("control-socket"); controlSocketPath != "" {
++		gimbalControlCh, err := listenGimbalControlSocket(ctx, controlSocketPath)
++		if err != nil {
++			return fmt.Errorf("unable to start the control socket %q: %w", controlSocketPath, err)
++		}
++		ctx = djible.WithGimbalControlRequested(ctx, gimbalControlCh)
++	}
++
+ 	devCh, errCh, err := djible.Scan(ctx)
+ 	if err != nil {
+ 		return fmt.Errorf("unable to start scanning: %w", err)
+@@ -393,6 +408,51 @@ func runOnBLE(c *cli.Context, action func(ctx context.Context, dev *djible.Devic
+ 	}
+ }
+ 
++// listenGimbalControlSocket は、配信中に外部プロセス(Bot)からジンバル操作コマンドを
++// 受け取るためのUnixドメインソケットをリッスンする。コマンドは改行区切りのJSON
++// ({"PitchDegPerSec":..,"RollDegPerSec":..,"YawDegPerSec":..})を想定する。
++func listenGimbalControlSocket(ctx context.Context, socketPath string) (chan djible.GimbalSpeedCommand, error) {
++	// 前回異常終了時のソケットファイルの残骸を掃除してからリッスンする。
++	_ = os.Remove(socketPath)
++	l, err := net.Listen("unix", socketPath)
++	if err != nil {
++		return nil, err
++	}
++	if err := os.Chmod(socketPath, 0600); err != nil {
++		logger.Errorf(ctx, "unable to chmod the control socket %q: %v", socketPath, err)
++	}
++
++	ch := make(chan djible.GimbalSpeedCommand, 8)
++	go func() {
++		defer l.Close()
++		for {
++			conn, err := l.Accept()
++			if err != nil {
++				logger.Debugf(ctx, "control socket accept loop stopped: %v", err)
++				return
++			}
++			go handleGimbalControlConn(ctx, conn, ch)
++		}
++	}()
++	return ch, nil
++}
++
++func handleGimbalControlConn(ctx context.Context, conn net.Conn, ch chan<- djible.GimbalSpeedCommand) {
++	defer conn.Close()
++	dec := json.NewDecoder(conn)
++	for {
++		var cmd djible.GimbalSpeedCommand
++		if err := dec.Decode(&cmd); err != nil {
++			return
++		}
++		select {
++		case ch <- cmd:
++		default:
++			logger.Debugf(ctx, "gimbal control channel is full; dropping a command")
++		}
++	}
++}
++
+ func runOnWiFi(c *cli.Context, action func(ctx context.Context, ctrl *djiwifi.Controller) error) error {
+ 	var loggerLevel logger.Level
+ 	if err := loggerLevel.Set(c.String("log-level")); err != nil {
+diff --git a/pkg/djible/context_gimbal_control.go b/pkg/djible/context_gimbal_control.go
+new file mode 100644
+index 0000000..264b30c
+--- /dev/null
++++ b/pkg/djible/context_gimbal_control.go
+@@ -0,0 +1,23 @@
++package djible
++
++import "context"
++
++// ジンバル操作コマンドを配信ループ(LiveStream)に伝えるためのチャンネル。
++// stopRequestedと同じ理由(BLE接続を握るctxはキャンセルできない)で、
++// ctx.Value経由でチャンネルだけを運ぶ。
++type GimbalSpeedCommand struct {
++	PitchDegPerSec float64
++	RollDegPerSec  float64
++	YawDegPerSec   float64
++}
++
++type gimbalControlRequestedCtxKey struct{}
++
++func WithGimbalControlRequested(ctx context.Context, ch <-chan GimbalSpeedCommand) context.Context {
++	return context.WithValue(ctx, gimbalControlRequestedCtxKey{}, ch)
++}
++
++func GimbalControlRequestedFromContext(ctx context.Context) <-chan GimbalSpeedCommand {
++	ch, _ := ctx.Value(gimbalControlRequestedCtxKey{}).(<-chan GimbalSpeedCommand)
++	return ch
++}
+diff --git a/pkg/djible/interface_app_to_gimbal.go b/pkg/djible/interface_app_to_gimbal.go
+new file mode 100644
+index 0000000..25089fe
+--- /dev/null
++++ b/pkg/djible/interface_app_to_gimbal.go
+@@ -0,0 +1,19 @@
++package djible
++
++import (
++	"github.com/xaionaro-go/djictl/pkg/duml"
++)
++
++type InterfaceAppToGimbal Device
++
++func (d *Device) AppToGimbal() *InterfaceAppToGimbal {
++	return (*InterfaceAppToGimbal)(d)
++}
++
++func (s *InterfaceAppToGimbal) Device() *Device {
++	return (*Device)(s)
++}
++
++func (s *InterfaceAppToGimbal) InterfaceID() duml.InterfaceID {
++	return duml.InterfaceIDAppToGimbal
++}
+diff --git a/pkg/djible/interface_app_to_gimbal_speed.go b/pkg/djible/interface_app_to_gimbal_speed.go
+new file mode 100644
+index 0000000..47ebc0d
+--- /dev/null
++++ b/pkg/djible/interface_app_to_gimbal_speed.go
+@@ -0,0 +1,51 @@
++package djible
++
++import (
++	"bytes"
++	"context"
++	"fmt"
++
++	"github.com/xaionaro-go/djictl/pkg/duml"
++)
++
++// SetSpeed instructs the gimbal to rotate at the given angular speeds
++// (degrees/sec per axis) until overridden by a new command.
++//
++// このコマンドはコミュニティのリバースエンジニアリング成果(yigitkonur/lib-osmo-ble)を
++// 元にしており、実機での効果は未確認(BLE経由ではカメラがコマンドを無視し、
++// ACKも一切返さないという報告がある。詳細はdeploy/djictl-patches/README.md参照)。
++func (s *InterfaceAppToGimbal) SetSpeed(
++	ctx context.Context,
++	pitchDegPerSec, rollDegPerSec, yawDegPerSec float64,
++) error {
++	msg := &duml.Message{
++		Interface: s.InterfaceID(),
++		ID:        duml.MessageIDGimbalSpeedControl,
++		Type:      duml.MessageTypeGimbalSpeedControl,
++		Payload:   s.getMessagePayloadSpeed(pitchDegPerSec, rollDegPerSec, yawDegPerSec),
++	}
++	if err := s.Device().SendMessage(ctx, msg, true); err != nil {
++		return fmt.Errorf("unable to send the gimbal speed command: %w", err)
++	}
++	return nil
++}
++
++func (s *InterfaceAppToGimbal) getMessagePayloadSpeed(
++	pitchDegPerSec, rollDegPerSec, yawDegPerSec float64,
++) []byte {
++	var buf bytes.Buffer
++	must(buf.Write(int16LEBytes(pitchDegPerSec * 10)))
++	must(buf.Write(int16LEBytes(rollDegPerSec * 10)))
++	must(buf.Write(int16LEBytes(yawDegPerSec * 10)))
++	var flags byte
++	if pitchDegPerSec != 0 || rollDegPerSec != 0 || yawDegPerSec != 0 {
++		flags = 0x01
++	}
++	must(buf.Write([]byte{flags}))
++	return buf.Bytes()
++}
++
++func int16LEBytes(v float64) []byte {
++	i := int16(v)
++	return []byte{byte(i), byte(i >> 8)}
++}
+diff --git a/pkg/djible/interface_app_to_video_transmission_start_live_stream.go b/pkg/djible/interface_app_to_video_transmission_start_live_stream.go
+index dff1a83..51aa998 100644
+--- a/pkg/djible/interface_app_to_video_transmission_start_live_stream.go
++++ b/pkg/djible/interface_app_to_video_transmission_start_live_stream.go
+@@ -33,6 +33,8 @@ func (s *InterfaceAppToVideoTransmission) LiveStream(
+ 	}
+ 
+ 	stopRequested := StopRequestedFromContext(ctx)
++	gimbalControlRequested := GimbalControlRequestedFromContext(ctx)
++	battChan := s.Device().getReceiveMessageChan(ctx, duml.MessageTypeBatteryStatus)
+ 	for {
+ 		select {
+ 		case <-stopRequested:
+@@ -43,19 +45,21 @@ func (s *InterfaceAppToVideoTransmission) LiveStream(
+ 				logger.Infof(ctx, "requested the camera to stop the live stream")
+ 			}
+ 			return nil
+-		default:
+-		}
+-
+-		msg, err := s.ReceiveMessageLiveStreamResult(ctx)
+-		if err != nil {
+-			return fmt.Errorf("unable to receive a response: %w", err)
+-		}
+-		status, err := duml.ParseBatteryStatus(ctx, msg.Payload)
+-		if err != nil {
+-			logger.Debugf(ctx, "unable to parse battery status: %v", err)
+-			continue
++		case cmd := <-gimbalControlRequested:
++			logger.Debugf(ctx, "gimbal control requested: %+v", cmd)
++			if err := s.Device().AppToGimbal().SetSpeed(ctx, cmd.PitchDegPerSec, cmd.RollDegPerSec, cmd.YawDegPerSec); err != nil {
++				logger.Errorf(ctx, "unable to send the gimbal speed command: %v", err)
++			}
++		case <-ctx.Done():
++			return ctx.Err()
++		case msg := <-battChan:
++			status, err := duml.ParseBatteryStatus(ctx, msg.Payload)
++			if err != nil {
++				logger.Debugf(ctx, "unable to parse battery status: %v", err)
++				continue
++			}
++			logger.Infof(ctx, "battery: %s", status.Capacity)
+ 		}
+-		logger.Infof(ctx, "battery: %s", status.Capacity)
+ 	}
+ }
+ 
+diff --git a/pkg/duml/message_id.go b/pkg/duml/message_id.go
+index cceee69..8c8a88b 100644
+--- a/pkg/duml/message_id.go
++++ b/pkg/duml/message_id.go
+@@ -18,6 +18,8 @@ const (
+ 	MessageIDStopStreaming             = MessageID(0xB5BB)
+ 	MessageIDAppIdentifier             = MessageID(0xC994)
+ 	MessageIDCameraAPInfo              = MessageID(0x76AA)
++	// 応答を待たないコマンドなので相関ID用の任意値(重複しなければ良い)。
++	MessageIDGimbalSpeedControl = MessageID(0x0C04)
+ )
+ 
+ func (id MessageID) String() string {
+@@ -40,6 +42,8 @@ func (id MessageID) String() string {
+ 		return "app_identifier"
+ 	case MessageIDCameraAPInfo:
+ 		return "camera_ap_info"
++	case MessageIDGimbalSpeedControl:
++		return "gimbal_speed_control"
+ 	default:
+ 		return fmt.Sprintf("%04X", uint16(id))
+ 	}
+diff --git a/pkg/duml/message_type.go b/pkg/duml/message_type.go
+index 41f43f2..c684782 100644
+--- a/pkg/duml/message_type.go
++++ b/pkg/duml/message_type.go
+@@ -154,8 +154,9 @@ const (
+ 	CommandIDGogglesMode     CommandID = 0x3D
+ 
+ 	// --- Gimbal (Set 0x04) ---
+-	CommandIDMaybeStatus CommandID = 0x05
+-	CommandIDKeepAlive   CommandID = 0x27
++	CommandIDMaybeStatus        CommandID = 0x05
++	CommandIDKeepAlive          CommandID = 0x27
++	CommandIDGimbalSpeedControl CommandID = 0x0C
+ 
+ 	// --- Remote Controller (Set 0x06) ---
+ 	CommandIDRemoteControllerSimulatorData CommandID = 0x24
+@@ -211,6 +212,10 @@ var (
+ 	MessageTypeUnknown0MaybeStatus = MessageTypeNotification(CommandSetUnknown0, CommandIDMaybeStatus)
+ 	MessageTypeKeepAlive           = MessageTypeNotification(CommandSetUnknown0, CommandIDKeepAlive)
+ 
++	// --- InterfaceID: AppToGimbal (0x0203) ---
++	// 実機での効果は未確認(コミュニティのリバースエンジニアリング成果を移植したもの)。
++	MessageTypeGimbalSpeedControl = MessageTypeNotification(CommandSetUnknown0, CommandIDGimbalSpeedControl)
++
+ 	// --- Remote Controller / Simulator (Set 0x06) ---
+ 	MessageTypeRemoteControllerSimulatorData = MessageTypeNotification(CommandSetRemoteController, CommandIDRemoteControllerSimulatorData)
+ 
+@@ -286,6 +291,8 @@ func (t MessageType) String() string {
+ 		return "gimbal_status"
+ 	case MessageTypeKeepAlive:
+ 		return "keep_alive"
++	case MessageTypeGimbalSpeedControl:
++		return "gimbal_speed_control"
+ 	case MessageTypePairingStarted:
+ 		return "pairing_started"
+ 	case MessageTypeSetPairingPIN:

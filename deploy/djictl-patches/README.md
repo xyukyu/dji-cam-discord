@@ -45,3 +45,62 @@ ssh raspi "sudo setcap 'cap_net_raw,cap_net_admin+eip' /home/yukyu/dji-cam-disco
 ```
 
 setcapは再ビルドのたびに失われるので必ず再付与すること(`deploy/NOTES.md` 参照)。
+
+# djictl パッチ2: 配信中のジンバル操作をUnixソケット経由で受け付ける
+
+`gimbal-control-socket.patch`(上記の`stop-streaming.patch`適用済みの状態に対して当てる)。
+
+## 何をするパッチか
+
+`connect-wifi-and-start-streaming` に `--control-socket <path>` オプションを追加する。
+指定すると、配信中の監視ループ(バッテリー受信ループ)がBLE接続を握ったまま、
+そのUnixドメインソケットへ改行区切りJSON
+
+```json
+{"PitchDegPerSec": 20, "RollDegPerSec": 0, "YawDegPerSec": 0}
+```
+
+を書き込むことでジンバルへ速度制御コマンドを送れるようにする(`0,0,0`で停止)。
+BotはWebの操作パネルからこのソケットへ中継する想定(Bot自体はカメラ用BLE接続を
+持たないため、djictl側にこの受付口を作る方式を採用した。詳細は本リポジトリの
+`CLAUDE.md` 参照)。
+
+## プロトコルの出典と実機での未確認事項
+
+ジンバルのコマンドセット(cmdSet=0x04)・速度制御コマンド(cmdId=0x0C)の
+バイトレイアウトはDJI公式仕様ではなく、コミュニティのリバースエンジニアリング成果
+([yigitkonur/lib-osmo-ble](https://github.com/yigitkonur/lib-osmo-ble))を移植したもの。
+
+**結論(2026-08-23 実機検証済み): このパッチによるジンバル制御は動作しない。**
+lib-osmo-ble自身も「プロトコルの見た目は正しいはずだが、20種類以上のコマンド
+バリエーションを試してもOsmo Pocket 3はBLE単体では一切反応せずACKも返さなかった。
+配信中(WiFi接続確立後)なら効くかもしれないが未検証」と報告していたが、本アプリで
+実際に配信中(WiFi接続確立・RTMP配信中)にUnixソケット経由でコマンドを送信しても、
+送信自体はエラーなく完了する(BLE書き込み自体は成功している)にもかかわらず、
+カメラのジンバルは一切反応しなかった。Bot→Unixソケット→djictl→BLE送信の経路には
+バグがないことを確認した上での結果であり、「BLE経由のジンバル制御コマンド送信は
+(少なくともこの機種・ファームウェアでは、配信中であっても)機能しない」という
+結論に至った。
+
+このパッチのコード自体は無害(配信の起動・監視・停止には影響しない)なため
+残しているが、ジンバルを実際に動かす方法としては使えない。ジンバル/ズームを
+本当に動かすには、DJI Mimoアプリがジンバル操作時に実際にどの経路(BLEの別コマンド、
+WiFi経由の別プロトコル等)を使っているかを、Mimoアプリとカメラ間の通信を
+キャプチャして解析する必要がある(Android端末のBluetooth HCI snoop log等)。
+
+ズーム制御は、調査した範囲のOSS(lib-osmo-ble, node-osmo, djictl本体)いずれにも
+プロトコル仕様が存在しなかったため本パッチには含まれていない。実装するには
+DJI Mimoアプリとカメラ間のBLE通信を別途キャプチャ・解析する必要がある。
+
+## 適用方法
+
+`stop-streaming.patch` を適用済みのソースに対して重ねて当てる:
+
+```
+ssh raspi "cd /home/yukyu/dji-cam-discord/src/djictl && git apply /tmp/gimbal-control-socket.patch"
+ssh raspi "export PATH=/usr/local/go-1.26/bin:\$PATH && cd /home/yukyu/dji-cam-discord/src/djictl && go build -o /home/yukyu/dji-cam-discord/bin/djictl ./cmd/djictl"
+ssh raspi "sudo setcap 'cap_net_raw,cap_net_admin+eip' /home/yukyu/dji-cam-discord/bin/djictl"
+```
+
+(2026-08-23、ラズパイ上のGo 1.26で`go build`/`go vet`が通ることを確認済み。
+実機でのジンバル動作自体は未検証。)
