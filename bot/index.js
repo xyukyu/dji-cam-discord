@@ -1,5 +1,8 @@
 require("dotenv").config();
 const { spawn } = require("child_process");
+const http = require("http");
+const path = require("path");
+const crypto = require("crypto");
 const express = require("express");
 const { Client, GatewayIntentBits, EmbedBuilder } = require("discord.js");
 
@@ -13,6 +16,8 @@ const {
   WEBHOOK_PORT,
   VIEWER_BASE_URL,
   CLOUDFLARED_METRICS_URL,
+  VIEWER_CONTROL_PASSWORD,
+  VIEWER_PUBLIC_PORT,
 } = process.env;
 
 for (const [name, value] of Object.entries({
@@ -22,6 +27,7 @@ for (const [name, value] of Object.entries({
   HOME_WIFI_PASSWORD,
   RTMP_URL,
   DJICTL_PATH,
+  VIEWER_CONTROL_PASSWORD,
 })) {
   if (!value) {
     console.error(`環境変数 ${name} が設定されていません(.envを確認)`);
@@ -45,7 +51,7 @@ async function resolveViewerUrl() {
     if (res.ok) {
       const { hostname } = await res.json();
       if (hostname) {
-        return `https://${hostname}/pocket3/`;
+        return `https://${hostname}/`;
       }
     }
   } catch (err) {
@@ -101,6 +107,21 @@ const WATCHDOG_STREAMING_SILENCE_MS = 20_000;
 // 画質設定。/cam start でオプション指定が無ければこの値(前回値)を使う。
 // 初期値は自宅WiFiの電波状況を踏まえた安定寄りの設定(1080p/6000Kbpsのdjictlデフォルトより控えめ)。
 let currentSettings = { resolution: "720p", bitrateKbps: 3000, fps: 30 };
+
+// MediaMTXのwebhook(runOnAvailable/runOnUnavailable)から見た実際のRTMP配信状態。
+// 視聴ページの状態表示・操作パネルの活性制御に使う(djictlプロセスの有無とは別軸)。
+let isLive = false;
+
+// 視聴ページの操作パネル(配信開始/停止/画質変更)用の簡易パスワード認証。
+// タイミング攻撃対策でcrypto.timingSafeEqualを使うが、長さが違うと即falseにする
+// (timingSafeEqualは長さが異なるバッファに対して例外を投げるため)。
+function isControlPasswordValid(input) {
+  if (typeof input !== "string" || input.length === 0) return false;
+  const expected = Buffer.from(VIEWER_CONTROL_PASSWORD);
+  const actual = Buffer.from(input);
+  if (expected.length !== actual.length) return false;
+  return crypto.timingSafeEqual(expected, actual);
+}
 
 function buildStreamEmbed({ ended, viewerUrl }) {
   const embed = new EmbedBuilder()
@@ -217,6 +238,7 @@ async function checkWatchdog() {
   console.error(
     `[djictl] ${Math.round(silenceMs / 1000)}秒間カメラからの応答がないため、ハングとみなしてプロセスを自動停止します`
   );
+  isLive = false;
   await stopCameraStream();
 
   if (notifyChannelId) {
@@ -315,6 +337,7 @@ const app = express();
 
 app.post("/stream-started", async (_req, res) => {
   res.sendStatus(200);
+  isLive = true;
   if (!notifyChannelId) {
     console.error("通知先チャンネル未確定のため配信開始通知をスキップ(先に/cam startを実行してください)");
     return;
@@ -344,6 +367,7 @@ app.post("/stream-started", async (_req, res) => {
 
 app.post("/stream-stopped", async (_req, res) => {
   res.sendStatus(200);
+  isLive = false;
   clearInterval(batteryUpdateInterval);
   batteryUpdateInterval = null;
   if (!notifyChannelId) {
@@ -367,4 +391,76 @@ app.post("/stream-stopped", async (_req, res) => {
 const port = Number(WEBHOOK_PORT) || 3100;
 app.listen(port, "127.0.0.1", () => {
   console.log(`Webhookサーバーがポート${port}で待ち受け中(localhostのみ)`);
+});
+
+// --- 視聴ページ(Cloudflare Tunnel経由で外部公開)を配信するサーバー ---
+// webhookサーバーとは別ポートに分離する(MediaMTX以外からwebhookエンドポイントを
+// 叩けないようにするため)。cloudflaredはこのポートに向ける(deploy/cloudflared.service)。
+
+const publicApp = express();
+publicApp.use(express.json());
+publicApp.use(express.static(path.join(__dirname, "..", "viewer")));
+
+publicApp.get("/api/status", (_req, res) => {
+  res.json({
+    live: isLive,
+    starting: !!cameraProcess && !isLive,
+    battery: lastBatteryPercent,
+    settings: currentSettings,
+  });
+});
+
+publicApp.post("/api/cam/start", async (req, res) => {
+  const { password, resolution, bitrateKbps, fps } = req.body || {};
+  if (!isControlPasswordValid(password)) {
+    res.status(401).json({ error: "パスワードが正しくありません" });
+    return;
+  }
+  if (resolution) currentSettings.resolution = resolution;
+  if (bitrateKbps) currentSettings.bitrateKbps = Number(bitrateKbps);
+  if (fps) currentSettings.fps = Number(fps);
+  try {
+    await startCameraStream();
+    res.json({ ok: true, settings: currentSettings });
+  } catch (err) {
+    res.status(409).json({ error: err.message });
+  }
+});
+
+publicApp.post("/api/cam/stop", async (req, res) => {
+  const { password } = req.body || {};
+  if (!isControlPasswordValid(password)) {
+    res.status(401).json({ error: "パスワードが正しくありません" });
+    return;
+  }
+  const result = await stopCameraStream();
+  res.json(result);
+});
+
+// HLS本体(m3u8/セグメント)はMediaMTX(ローカルのみで待ち受け)にリバースプロキシする。
+// これによりcloudflaredをMediaMTXへ直接向けずに済み、公開エンドポイントをこのポートに一本化できる。
+publicApp.use("/pocket3", (req, res) => {
+  const upstream = http.request(
+    {
+      hostname: "127.0.0.1",
+      port: 8888,
+      path: req.originalUrl,
+      method: req.method,
+      headers: req.headers,
+    },
+    (upstreamRes) => {
+      res.writeHead(upstreamRes.statusCode, upstreamRes.headers);
+      upstreamRes.pipe(res);
+    }
+  );
+  upstream.on("error", (err) => {
+    console.error("MediaMTXへのプロキシに失敗:", err);
+    res.sendStatus(502);
+  });
+  req.pipe(upstream);
+});
+
+const publicPort = Number(VIEWER_PUBLIC_PORT) || 3200;
+publicApp.listen(publicPort, "127.0.0.1", () => {
+  console.log(`視聴ページサーバーがポート${publicPort}で待ち受け中(cloudflaredからのみ到達想定)`);
 });

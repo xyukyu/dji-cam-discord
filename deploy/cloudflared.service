@@ -1,12 +1,12 @@
 [Unit]
 Description=Cloudflare Quick Tunnel (dji-cam-discord viewer)
-After=network-online.target mediamtx.service
+After=network-online.target mediamtx.service dji-cam-bot.service
 Wants=network-online.target
 
 [Service]
 Type=simple
 User=<your-user>
-ExecStart=/usr/local/bin/cloudflared tunnel --url http://localhost:8888 --metrics localhost:20241
+ExecStart=/usr/local/bin/cloudflared tunnel --url http://localhost:3200 --metrics localhost:20241
 Restart=on-failure
 RestartSec=5
 

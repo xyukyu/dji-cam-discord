@@ -118,6 +118,7 @@ djictl側の問題に見えて紛らわしいので注意)。
 scp -r "d:\dev\dji-cam-discord\bot" raspi:/home/<your-user>/dji-cam-discord/
 ssh raspi "cd /home/<your-user>/dji-cam-discord/bot && npm install --omit=dev"
 # .env をローカルで作成し scp で転送(DISCORD_BOT_TOKEN, CAMERA_BLE_ADDRESS, RTMP_URLなど)
+# VIEWER_CONTROL_PASSWORD は必須(配信ページの操作パネル用の簡易パスワード)。未設定だと起動しない。
 ssh raspi "cd /home/<your-user>/dji-cam-discord/bot && node deploy-commands.js"   # スラッシュコマンド登録(初回・変更時のみ)
 ```
 
@@ -131,9 +132,17 @@ ssh raspi "curl -sL -o /tmp/cloudflared https://github.com/cloudflare/cloudflare
 ```
 `deploy/cloudflared.service` で `cloudflared tunnel --url http://localhost:8888` を常駐実行する。
 
-MediaMTXはHLSポート(8888)で `/<path名>/` にアクセスすると**自動生成のプレーヤーページ**を
-返してくれるため、`viewer/index.html` を別途ホストする必要はない
-(このリポジトリの `viewer/index.html` はカスタマイズしたくなった時の参考実装として残してある)。
+**2026-08-23〜: `viewer/index.html`(YouTube風カスタムページ+操作パネル)を実際にホストする方式に変更した。**
+以前はMediaMTXのHLSポート(8888)が自動生成するプレーヤーページをそのまま公開していたが、
+配信ページから配信開始/停止・画質変更ができる操作パネルを追加するため、Bot自身が
+静的ページ配信+操作API+MediaMTXへのHLSリバースプロキシを行う専用サーバー
+(`VIEWER_PUBLIC_PORT`、デフォルト3200、127.0.0.1のみで待受け)を持つようにした。
+そのため **cloudflaredの`--url`はMediaMTXの8888ではなくこのポートを指す**
+(`deploy/cloudflared.service` 参照)。MediaMTXの8888自体は変更なし(ローカルのみ)。
+
+操作パネルはCloudflare Tunnel経由で誰でも開けるページに置かれるため、
+`.env` の `VIEWER_CONTROL_PASSWORD`(必須)による簡易パスワード認証を掛けている。
+視聴(HLS再生)自体はパスワード不要、配信開始/停止・画質変更のAPI呼び出し時のみ必要。
 
 **Quick TunnelのURLは`cloudflared`再起動のたびに変わる**が、`.env`を手動更新する運用は
 実際に更新を忘れて古いURLのまま投稿される障害を起こした(2026-08-04)。そのため
@@ -144,6 +153,22 @@ Bot側は起動時ではなく配信開始のたびに、cloudflaredのローカ
 失敗した場合のフォールバック用途のみで、通常は空でよい。
 URLそのものを固定したい場合は独自ドメインをCloudflareに登録してnamed tunnelに
 切り替える(将来対応、上記の自動取得があれば必須ではない)。
+
+### 調査メモ: ジンバル(向き)/ズームの遠隔操作は現状不可(2026-08-23)
+
+配信ページからのカメラ操作範囲を検討する際に調査。djictl公式README(GitHub)には
+「現状できるのはRTMP強制配信のみ、それ以外は開発中(WIP)」と明記されており、
+ジンバル/ズームの制御コマンドは実装されていない。
+
+OSSで唯一近いものは `yigitkonur/lib-osmo-ble`(MIT、Node.js、BLEプロトコルのリバースエンジニアリング)
+で、ジンバルの速度/絶対角度/相対移動コマンドは実装されているが、README曰く
+「配信(WiFiストリーミング)がアクティブでないとカメラ側がコマンドを無視する」という制限があり、
+10コミット程度の初期段階の個人プロジェクト。ズーム制御はこのライブラリにも実装がない。
+
+さらに **Osmo Pocket 3 のBLE接続は同時に1本のみ**(本ファイル冒頭・CLAUDE.md参照)のため、
+配信中はdjictlが既にBLE接続を保持しており、別プロセスの`lib-osmo-ble`が同時にジンバル制御しようと
+すると接続が競合する。実現するにはdjictl側の接続管理に食い込む改造が必要で、今回は見送った。
+将来ジンバル連携を検討する場合はここから着手すること。
 
 ## 5. systemd化
 
@@ -163,6 +188,8 @@ ssh raspi "sudo journalctl -u mediamtx.service -u dji-cam-bot.service -u cloudfl
   (`deploy/djictl-patches/` 参照。カメラが実際に配信を止めるところまで実機確認済み)。
   もし監視プロセスだけが落ちてカメラだけ配信し続けている場合は
   `djictl ble --filter-device-addr <addr> stop-streaming` で個別に止められる。
+- 視聴ページ自体からも配信開始/停止・画質変更ができる(ページ下部の「カメラを操作」パネル、
+  `VIEWER_CONTROL_PASSWORD` の入力が必要)。視聴(HLS再生)はパスワード不要で誰でも可能。
 
 ## 以後の更新デプロイ
 

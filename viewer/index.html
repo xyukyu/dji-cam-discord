@@ -3,55 +3,514 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>カメラ配信</title>
+<title>Pocket3 ライブカメラ</title>
 <style>
-  html, body { margin: 0; height: 100%; background: #111; }
-  body { display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: sans-serif; color: #eee; }
-  video { width: 100%; max-width: 960px; background: #000; }
-  #status { margin: 12px 0; font-size: 14px; color: #aaa; }
+  :root {
+    --bg: #0f0f0f;
+    --surface: #181818;
+    --surface-2: #212121;
+    --border: #303030;
+    --text: #f1f1f1;
+    --text-dim: #aaaaaa;
+    --accent: #ff3b3b;
+    --accent-dim: #7a1f1f;
+    --ok: #3ba55d;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    min-height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Hiragino Sans", "Yu Gothic", sans-serif;
+  }
+  body {
+    display: flex;
+    justify-content: center;
+    padding: 16px;
+  }
+  .page {
+    width: 100%;
+    max-width: 960px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  /* --- プレーヤー --- */
+  .player {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    background: #000;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
+  }
+  video {
+    width: 100%;
+    height: 100%;
+    display: block;
+    background: #000;
+  }
+
+  .badge {
+    position: absolute;
+    top: 10px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(4px);
+  }
+  .badge-live { left: 10px; color: #fff; }
+  .badge-live .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--accent);
+    animation: pulse 1.4s infinite;
+  }
+  .badge-live.offline .dot { background: #777; animation: none; }
+  .badge-battery { right: 10px; color: #fff; }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+  }
+
+  .center-play {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.25);
+    cursor: pointer;
+    opacity: 1;
+    transition: opacity 0.15s;
+  }
+  .center-play.hidden { opacity: 0; pointer-events: none; }
+  .center-play svg { width: 64px; height: 64px; filter: drop-shadow(0 2px 6px rgba(0,0,0,0.6)); }
+
+  .controls {
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 22px 12px 10px;
+    background: linear-gradient(to top, rgba(0,0,0,0.75), transparent);
+    opacity: 0;
+    transform: translateY(4px);
+    transition: opacity 0.15s, transform 0.15s;
+  }
+  .player.controls-visible .controls,
+  .player:hover .controls,
+  .player.paused .controls {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  .controls button {
+    background: none;
+    border: none;
+    padding: 4px;
+    color: #fff;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+  }
+  .controls button svg { width: 22px; height: 22px; }
+  .volume-row { display: flex; align-items: center; gap: 4px; }
+  .volume-row input[type="range"] {
+    width: 70px;
+    accent-color: var(--accent);
+  }
+  .controls .status-text {
+    flex: 1;
+    font-size: 13px;
+    color: #ddd;
+  }
+
+  /* --- タイトル行 --- */
+  .info {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .info h1 { font-size: 18px; margin: 0; }
+  .info .sub { font-size: 13px; color: var(--text-dim); }
+
+  /* --- 操作パネル --- */
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .panel-header {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 16px;
+    background: none;
+    border: none;
+    color: var(--text);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .panel-header .chev { transition: transform 0.15s; color: var(--text-dim); }
+  .panel.open .panel-header .chev { transform: rotate(180deg); }
+  .panel-body {
+    display: none;
+    padding: 0 16px 16px;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .panel.open .panel-body { display: flex; }
+
+  .field-row { display: flex; gap: 8px; }
+  input[type="password"], select {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 14px;
+  }
+  input[type="password"] { flex: 1; min-width: 0; }
+
+  .btn {
+    border: none;
+    border-radius: 8px;
+    padding: 9px 16px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-secondary { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); }
+
+  .settings-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .settings-row select { flex: 1; min-width: 100px; }
+  .actions-row { display: flex; gap: 8px; }
+  .actions-row .btn { flex: 1; }
+
+  .msg { font-size: 13px; min-height: 18px; }
+  .msg.error { color: #f28b82; }
+  .msg.ok { color: var(--ok); }
 </style>
 </head>
 <body>
-  <video id="video" controls autoplay muted playsinline></video>
-  <div id="status">読み込み中...</div>
+  <div class="page">
+    <div class="player" id="player">
+      <video id="video" muted autoplay playsinline></video>
+
+      <div class="badge badge-live offline" id="liveBadge">
+        <span class="dot"></span><span id="liveBadgeText">OFFLINE</span>
+      </div>
+      <div class="badge badge-battery" id="batteryBadge" style="display:none;">🔋 <span id="batteryText">--%</span></div>
+
+      <div class="center-play" id="centerPlay">
+        <svg viewBox="0 0 24 24" fill="#fff"><path d="M8 5v14l11-7z"/></svg>
+      </div>
+
+      <div class="controls" id="controls">
+        <button id="playBtn" title="再生/一時停止">
+          <svg id="playIcon" viewBox="0 0 24 24" fill="#fff"><path d="M8 5v14l11-7z"/></svg>
+        </button>
+        <div class="volume-row">
+          <button id="muteBtn" title="ミュート">
+            <svg id="muteIcon" viewBox="0 0 24 24" fill="#fff"><path d="M3 10v4h4l5 5V5L7 10H3z"/></svg>
+          </button>
+          <input type="range" id="volume" min="0" max="1" step="0.05" value="1">
+        </div>
+        <div class="status-text" id="controlsStatus">読み込み中...</div>
+        <button id="fullscreenBtn" title="全画面">
+          <svg viewBox="0 0 24 24" fill="#fff"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="info">
+      <div>
+        <h1>Pocket3 ライブカメラ</h1>
+        <div class="sub" id="subStatus">状態を確認中...</div>
+      </div>
+    </div>
+
+    <div class="panel" id="panel">
+      <button class="panel-header" id="panelToggle">
+        <span>🎛 カメラを操作</span>
+        <span class="chev">▾</span>
+      </button>
+      <div class="panel-body">
+        <div class="field-row">
+          <input type="password" id="password" placeholder="操作用パスワード">
+          <button class="btn btn-secondary" id="lockBtn">ロック解除</button>
+        </div>
+
+        <div class="settings-row">
+          <select id="resolution">
+            <option value="480p">480p</option>
+            <option value="720p" selected>720p</option>
+            <option value="1080p">1080p</option>
+          </select>
+          <select id="bitrateKbps">
+            <option value="1500">1500 Kbps</option>
+            <option value="3000" selected>3000 Kbps</option>
+            <option value="6000">6000 Kbps</option>
+            <option value="8000">8000 Kbps</option>
+          </select>
+          <select id="fps">
+            <option value="25">25 fps</option>
+            <option value="30" selected>30 fps</option>
+          </select>
+        </div>
+
+        <div class="actions-row">
+          <button class="btn btn-primary" id="startBtn" disabled>▶ 配信開始</button>
+          <button class="btn btn-secondary" id="stopBtn" disabled>⏹ 配信を停止</button>
+        </div>
+
+        <div class="msg" id="panelMsg"></div>
+      </div>
+    </div>
+  </div>
 
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
   <script>
-    // MediaMTXが同じホストのポート8888でHLSを配信している想定。
-    // Cloudflare Tunnel経由で公開する場合は、トンネル側でこのパスを
-    // ラズパイの 127.0.0.1:8888 に向けること。
     var streamUrl = "/pocket3/index.m3u8";
     var video = document.getElementById("video");
-    var statusEl = document.getElementById("status");
+    var player = document.getElementById("player");
 
-    function setStatus(text) { statusEl.textContent = text; }
-
-    if (Hls.isSupported()) {
-      var hls = new Hls({ lowLatencyMode: true });
-      hls.loadSource(streamUrl);
-      hls.attachMedia(video);
-      hls.on(Hls.Events.MANIFEST_PARSED, function () {
-        setStatus("配信中");
-        video.play().catch(function () {});
-      });
-      hls.on(Hls.Events.ERROR, function (event, data) {
-        if (data.fatal) {
-          setStatus("配信が見つかりません(カメラが配信中か確認してください)");
-        }
-      });
-    } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
-      // Safari/iOSはネイティブHLS再生に対応
-      video.src = streamUrl;
-      video.addEventListener("loadedmetadata", function () {
-        setStatus("配信中");
-        video.play().catch(function () {});
-      });
-      video.addEventListener("error", function () {
-        setStatus("配信が見つかりません(カメラが配信中か確認してください)");
-      });
-    } else {
-      setStatus("このブラウザはHLS再生に対応していません");
+    // --- HLS再生 ---
+    var hls = null;
+    function loadStream() {
+      if (Hls.isSupported()) {
+        hls = new Hls({ lowLatencyMode: true });
+        hls.loadSource(streamUrl);
+        hls.attachMedia(video);
+        hls.on(Hls.Events.MANIFEST_PARSED, function () {
+          video.play().catch(function () {});
+        });
+      } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+        video.src = streamUrl;
+        video.addEventListener("loadedmetadata", function () {
+          video.play().catch(function () {});
+        });
+      }
     }
+    loadStream();
+
+    // --- カスタムコントロール ---
+    var playBtn = document.getElementById("playBtn");
+    var playIcon = document.getElementById("playIcon");
+    var centerPlay = document.getElementById("centerPlay");
+    var muteBtn = document.getElementById("muteBtn");
+    var muteIcon = document.getElementById("muteIcon");
+    var volume = document.getElementById("volume");
+    var fullscreenBtn = document.getElementById("fullscreenBtn");
+    var controlsStatus = document.getElementById("controlsStatus");
+
+    var ICON_PLAY = '<path d="M8 5v14l11-7z"/>';
+    var ICON_PAUSE = '<path d="M6 5h4v14H6zM14 5h4v14h-4z"/>';
+    var ICON_VOL = '<path d="M3 10v4h4l5 5V5L7 10H3z"/>';
+    var ICON_MUTE = '<path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.42.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06a8.99 8.99 0 003.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/>';
+
+    function setPaused(paused) {
+      playIcon.innerHTML = paused ? ICON_PLAY : ICON_PAUSE;
+      centerPlay.classList.toggle("hidden", !paused);
+      player.classList.toggle("paused", paused);
+    }
+    setPaused(true);
+
+    function togglePlay() {
+      if (video.paused) { video.play().catch(function () {}); } else { video.pause(); }
+    }
+    playBtn.addEventListener("click", togglePlay);
+    centerPlay.addEventListener("click", togglePlay);
+    video.addEventListener("play", function () { setPaused(false); });
+    video.addEventListener("pause", function () { setPaused(true); });
+
+    function refreshMuteIcon() {
+      muteIcon.innerHTML = (video.muted || video.volume === 0) ? ICON_MUTE : ICON_VOL;
+    }
+    muteBtn.addEventListener("click", function () {
+      video.muted = !video.muted;
+      if (!video.muted && video.volume === 0) video.volume = 1;
+      volume.value = video.muted ? 0 : video.volume;
+      refreshMuteIcon();
+    });
+    volume.addEventListener("input", function () {
+      video.volume = Number(volume.value);
+      video.muted = video.volume === 0;
+      refreshMuteIcon();
+    });
+    refreshMuteIcon();
+
+    fullscreenBtn.addEventListener("click", function () {
+      if (document.fullscreenElement) {
+        document.exitFullscreen();
+      } else {
+        player.requestFullscreen().catch(function () {});
+      }
+    });
+
+    // コントロールバーの自動非表示(YouTube風)
+    var hideTimer = null;
+    function showControlsTemporarily() {
+      player.classList.add("controls-visible");
+      clearTimeout(hideTimer);
+      hideTimer = setTimeout(function () {
+        player.classList.remove("controls-visible");
+      }, 2800);
+    }
+    player.addEventListener("mousemove", showControlsTemporarily);
+    player.addEventListener("touchstart", showControlsTemporarily);
+    showControlsTemporarily();
+
+    // --- 配信状態のポーリング ---
+    var liveBadge = document.getElementById("liveBadge");
+    var liveBadgeText = document.getElementById("liveBadgeText");
+    var batteryBadge = document.getElementById("batteryBadge");
+    var batteryText = document.getElementById("batteryText");
+    var subStatus = document.getElementById("subStatus");
+    var startBtn = document.getElementById("startBtn");
+    var stopBtn = document.getElementById("stopBtn");
+    var resolutionSel = document.getElementById("resolution");
+    var bitrateSel = document.getElementById("bitrateKbps");
+    var fpsSel = document.getElementById("fps");
+
+    var lastLive = null;
+    var editingSettings = false;
+    [resolutionSel, bitrateSel, fpsSel].forEach(function (el) {
+      el.addEventListener("focus", function () { editingSettings = true; });
+      el.addEventListener("blur", function () { editingSettings = false; });
+    });
+
+    function applyStatus(s) {
+      liveBadge.classList.toggle("offline", !s.live);
+      liveBadgeText.textContent = s.live ? "LIVE" : (s.starting ? "接続中..." : "OFFLINE");
+      controlsStatus.textContent = s.live ? "配信中" : (s.starting ? "カメラに接続しています..." : "配信していません");
+      subStatus.textContent = s.live ? "配信中です" : (s.starting ? "カメラへの接続・配信開始を待っています" : "現在配信していません(操作パネルから開始できます)");
+
+      if (typeof s.battery === "number") {
+        batteryBadge.style.display = "flex";
+        batteryText.textContent = s.battery + "%";
+      } else {
+        batteryBadge.style.display = "none";
+      }
+
+      if (!editingSettings && s.settings) {
+        resolutionSel.value = s.settings.resolution;
+        bitrateSel.value = String(s.settings.bitrateKbps);
+        fpsSel.value = String(s.settings.fps);
+      }
+
+      startBtn.disabled = s.live || s.starting;
+      stopBtn.disabled = !s.live && !s.starting;
+
+      if (s.live && lastLive === false) {
+        // 停止していたところから配信が始まった: HLSを読み込み直す
+        loadStream();
+      }
+      lastLive = s.live;
+    }
+
+    function pollStatus() {
+      fetch("/api/status")
+        .then(function (r) { return r.json(); })
+        .then(applyStatus)
+        .catch(function () {
+          controlsStatus.textContent = "状態を取得できません";
+        });
+    }
+    pollStatus();
+    setInterval(pollStatus, 5000);
+
+    // --- 操作パネル ---
+    var panel = document.getElementById("panel");
+    var panelToggle = document.getElementById("panelToggle");
+    var panelMsg = document.getElementById("panelMsg");
+    var passwordInput = document.getElementById("password");
+    var lockBtn = document.getElementById("lockBtn");
+
+    panelToggle.addEventListener("click", function () {
+      panel.classList.toggle("open");
+    });
+
+    var storedPassword = null;
+    try { storedPassword = localStorage.getItem("camControlPassword"); } catch (e) {}
+    if (storedPassword) passwordInput.value = storedPassword;
+
+    function setPanelMsg(text, kind) {
+      panelMsg.textContent = text || "";
+      panelMsg.className = "msg" + (kind ? " " + kind : "");
+    }
+
+    lockBtn.addEventListener("click", function () {
+      try { localStorage.setItem("camControlPassword", passwordInput.value); } catch (e) {}
+      setPanelMsg("パスワードを記憶しました。操作ボタンを押すと反映されます。", "ok");
+    });
+
+    function currentPassword() {
+      return passwordInput.value || "";
+    }
+
+    function callApi(path, body) {
+      return fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }).then(function (r) {
+        return r.json().then(function (data) {
+          if (!r.ok) throw new Error(data.error || "操作に失敗しました");
+          return data;
+        });
+      });
+    }
+
+    startBtn.addEventListener("click", function () {
+      setPanelMsg("配信を開始しています...");
+      startBtn.disabled = true;
+      callApi("/api/cam/start", {
+        password: currentPassword(),
+        resolution: resolutionSel.value,
+        bitrateKbps: Number(bitrateSel.value),
+        fps: Number(fpsSel.value),
+      })
+        .then(function () {
+          setPanelMsg("配信開始を指示しました。数秒〜数十秒後に配信が始まります。", "ok");
+          pollStatus();
+        })
+        .catch(function (err) {
+          setPanelMsg(err.message, "error");
+          pollStatus();
+        });
+    });
+
+    stopBtn.addEventListener("click", function () {
+      setPanelMsg("配信を停止しています...");
+      stopBtn.disabled = true;
+      callApi("/api/cam/stop", { password: currentPassword() })
+        .then(function () {
+          setPanelMsg("配信を停止しました。", "ok");
+          pollStatus();
+        })
+        .catch(function (err) {
+          setPanelMsg(err.message, "error");
+          pollStatus();
+        });
+    });
   </script>
 </body>
 </html>
