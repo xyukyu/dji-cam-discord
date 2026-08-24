@@ -6,6 +6,8 @@ const path = require("path");
 const crypto = require("crypto");
 const express = require("express");
 const { Client, GatewayIntentBits, EmbedBuilder } = require("discord.js");
+const youtube = require("./youtube");
+const relay = require("./relay");
 
 const {
   DISCORD_BOT_TOKEN,
@@ -140,6 +142,9 @@ function sendGimbalCommand(pitchDegPerSec, rollDegPerSec, yawDegPerSec) {
 // MediaMTXのwebhook(runOnAvailable/runOnUnavailable)から見た実際のRTMP配信状態。
 // 視聴ページの状態表示・操作パネルの活性制御に使う(djictlプロセスの有無とは別軸)。
 let isLive = false;
+
+// YouTube Live連携(任意機能)が有効な間の現在の配信セッション情報。
+let youtubeSession = null;
 
 // 視聴ページの操作パネル(配信開始/停止/画質変更)用の簡易パスワード認証。
 // タイミング攻撃対策でcrypto.timingSafeEqualを使うが、長さが違うと即falseにする
@@ -362,6 +367,20 @@ const app = express();
 app.post("/stream-started", async (_req, res) => {
   res.sendStatus(200);
   isLive = true;
+
+  if (youtube.isEnabled()) {
+    try {
+      youtubeSession = await youtube.createLiveSession({
+        resolution: currentSettings.resolution,
+        fps: currentSettings.fps,
+      });
+      relay.start(youtubeSession.ingestUrl);
+    } catch (err) {
+      console.error("YouTube Live連携に失敗:", err);
+      youtubeSession = null;
+    }
+  }
+
   if (!notifyChannelId) {
     console.error("通知先チャンネル未確定のため配信開始通知をスキップ(先に/cam startを実行してください)");
     return;
@@ -394,6 +413,13 @@ app.post("/stream-stopped", async (_req, res) => {
   isLive = false;
   clearInterval(batteryUpdateInterval);
   batteryUpdateInterval = null;
+
+  if (youtubeSession) {
+    relay.stop();
+    await youtube.completeBroadcast(youtubeSession.broadcastId);
+    youtubeSession = null;
+  }
+
   if (!notifyChannelId) {
     return;
   }
@@ -431,6 +457,7 @@ publicApp.get("/api/status", (_req, res) => {
     starting: !!cameraProcess && !isLive,
     battery: lastBatteryPercent,
     settings: currentSettings,
+    youtubeVideoId: youtubeSession?.broadcastId || null,
   });
 });
 

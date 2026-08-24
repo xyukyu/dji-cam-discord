@@ -37,8 +37,24 @@
     gap: 16px;
   }
 
+  /* --- 再生ソース切り替えタブ --- */
+  .source-tabs { display: flex; gap: 8px; }
+  .source-tab {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    border-radius: 999px;
+    padding: 6px 14px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .source-tab.active { color: #fff; border-color: var(--accent); background: var(--accent-dim); }
+  .source-note { font-size: 12px; color: var(--text-dim); margin: -8px 0 0; }
+  .tab-panel-hidden { display: none; }
+
   /* --- プレーヤー --- */
-  .player {
+  .player, .youtube-player {
     position: relative;
     width: 100%;
     aspect-ratio: 16 / 9;
@@ -52,6 +68,23 @@
     height: 100%;
     display: block;
     background: #000;
+  }
+  .youtube-player iframe {
+    width: 100%;
+    height: 100%;
+    border: 0;
+    display: block;
+  }
+  .youtube-empty-msg {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    text-align: center;
+    font-size: 14px;
+    color: var(--text-dim);
   }
 
   .badge {
@@ -282,6 +315,14 @@
 </head>
 <body>
   <div class="page">
+    <div class="source-tabs" id="sourceTabs">
+      <button class="source-tab active" data-source="hls">低遅延(HLS)</button>
+      <button class="source-tab" data-source="youtube">YouTube</button>
+    </div>
+    <div class="source-note tab-panel-hidden" id="youtubeNote">
+      ※YouTube配信が非公開設定の場合、視聴を許可されたGoogleアカウントでのログインが必要です。
+    </div>
+
     <div class="player" id="player">
       <video id="video" muted autoplay playsinline></video>
 
@@ -309,6 +350,11 @@
           <svg viewBox="0 0 24 24" fill="#fff"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
         </button>
       </div>
+    </div>
+
+    <div class="youtube-player tab-panel-hidden" id="youtubePlayer">
+      <iframe id="youtubeIframe" style="display:none;" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>
+      <div class="youtube-empty-msg" id="youtubeEmptyMsg">YouTube配信は現在利用できません。</div>
     </div>
 
     <div class="info">
@@ -470,6 +516,47 @@
     player.addEventListener("touchstart", showControlsTemporarily);
     showControlsTemporarily();
 
+    // --- 再生ソース切り替え(HLS / YouTube) ---
+    var sourceTabs = document.getElementById("sourceTabs");
+    var youtubeNote = document.getElementById("youtubeNote");
+    var youtubePlayerEl = document.getElementById("youtubePlayer");
+    var youtubeIframe = document.getElementById("youtubeIframe");
+    var youtubeEmptyMsg = document.getElementById("youtubeEmptyMsg");
+    var currentSource = "hls";
+    var currentYoutubeVideoId = null;
+
+    function updateYoutubeEmbed() {
+      if (currentSource !== "youtube") return;
+      if (currentYoutubeVideoId) {
+        var wantedSrc = "https://www.youtube.com/embed/" + currentYoutubeVideoId + "?autoplay=1&mute=1";
+        if (youtubeIframe.src !== wantedSrc) youtubeIframe.src = wantedSrc;
+        youtubeIframe.style.display = "block";
+        youtubeEmptyMsg.style.display = "none";
+      } else {
+        youtubeIframe.src = "";
+        youtubeIframe.style.display = "none";
+        youtubeEmptyMsg.style.display = "flex";
+      }
+    }
+
+    function setSource(source) {
+      currentSource = source;
+      Array.prototype.forEach.call(sourceTabs.children, function (btn) {
+        btn.classList.toggle("active", btn.dataset.source === source);
+      });
+      player.classList.toggle("tab-panel-hidden", source !== "hls");
+      youtubePlayerEl.classList.toggle("tab-panel-hidden", source !== "youtube");
+      youtubeNote.classList.toggle("tab-panel-hidden", source !== "youtube");
+      if (source === "youtube") {
+        updateYoutubeEmbed();
+      } else {
+        youtubeIframe.src = "";
+      }
+    }
+    Array.prototype.forEach.call(sourceTabs.children, function (btn) {
+      btn.addEventListener("click", function () { setSource(btn.dataset.source); });
+    });
+
     // --- 配信状態のポーリング ---
     var liveBadge = document.getElementById("liveBadge");
     var liveBadgeText = document.getElementById("liveBadgeText");
@@ -547,6 +634,9 @@
       }
 
       updateActionButtons();
+
+      currentYoutubeVideoId = s.youtubeVideoId || null;
+      updateYoutubeEmbed();
 
       if (s.live && lastLive === false) {
         // 停止していたところから配信が始まった: HLSを読み込み直す

@@ -227,3 +227,51 @@ ssh raspi "systemctl status network-watchdog.timer --no-pager"
 ssh raspi "sudo journalctl -u network-watchdog.service --no-pager -n 50"
 ```
 自動リブートが発生した形跡は `journalctl -u network-watchdog.service | grep 再起動` で確認できる。
+
+## 7. YouTube Live連携(任意機能、既定オフ)
+
+`/cam start` だけでYouTube Live配信の作成〜開始〜停止までを自動化する機能(`bot/youtube.js`
+/ `bot/relay.js`)。既定では `YOUTUBE_ENABLED=false` で無効化されており、有効化しない限り
+既存の自前視聴ページのみのフローに影響しない。
+
+**事前準備(1回のみ):**
+1. 対象のYouTubeチャンネルでライブ配信を有効化する(電話番号確認が必要。反映まで最大24時間
+   かかる場合があるので早めに済ませておく)。
+2. Google Cloud Consoleで新規プロジェクトを作成し「YouTube Data API v3」を有効化。
+3. OAuth同意画面を設定(テスト/内部利用でよい)。
+4. OAuthクライアントID(種類: デスクトップアプリ)を作成し、`client_id`/`client_secret`を取得。
+
+**refresh_tokenの取得(ローカルPC等、ブラウザが開ける環境で実行):**
+```
+YOUTUBE_CLIENT_ID=<client_id> YOUTUBE_CLIENT_SECRET=<client_secret> node bot/scripts/youtube-oauth-setup.js
+```
+表示されたURLをブラウザで開いて許可すると、refresh_tokenが標準出力に表示される。
+
+**ラズパイ側のセットアップ:**
+```
+ssh raspi "sudo apt install -y ffmpeg"
+ssh raspi "ffmpeg -version"   # 導入確認
+```
+`.env` に以下を設定してBotを再起動する:
+```
+YOUTUBE_ENABLED=true
+YOUTUBE_CLIENT_ID=<client_id>
+YOUTUBE_CLIENT_SECRET=<client_secret>
+YOUTUBE_REFRESH_TOKEN=<取得したrefresh_token>
+YOUTUBE_PRIVACY_STATUS=unlisted   # 公開範囲。unlisted/public/private
+```
+
+**動作確認:**
+- `/cam start` → Discord embedに「YouTubeで視聴」リンクが追加される(反映まで数十秒かかる場合あり)。
+- YouTube Studioの「配信」画面で状態が「LIVE」になっていることを確認。
+- `/cam stop` → ラズパイ上のffmpeg中継プロセスが終了し、YouTube Studio側も「終了」になることを確認。
+
+**注意点:**
+- 中継はffmpegによる再エンコード無しコピー(`-c copy`)。ffmpeg自体が落ちても既存の
+  djictl監視・ウォッチドッグとは独立しており、自動再起動はしない(ログのみ)。
+- refresh_token失効・API利用制限・チャンネルのライブ配信権限無効化時はYouTube連携のみ
+  失敗し、自前視聴ページ側の配信・通知は継続する(`console.error`にエラーが出るのみ)。
+- `YOUTUBE_PRIVACY_STATUS=private`を使う場合、URLを知っていても視聴を許可した特定の
+  Googleアカウント以外は視聴できない。配信(broadcast)は`/cam start`のたびに新規作成される
+  ため、視聴させたい相手のGoogleアカウントをYouTube Studioの共有設定で都度(または
+  事前にまとめて)許可する運用が必要になる(2026-08-24、本番はprivateで運用開始)。
