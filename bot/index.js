@@ -104,8 +104,25 @@ let streamingStarted = false;
 let watchdogTriggered = false;
 let watchdogInterval = null;
 const WATCHDOG_CHECK_INTERVAL_MS = 5_000;
-const WATCHDOG_STARTUP_SILENCE_MS = 90_000;
+const WATCHDOG_STARTUP_SILENCE_MS = 20_000;
 const WATCHDOG_STREAMING_SILENCE_MS = 20_000;
+
+// BLE接続はカメラ/コントローラ側の不安定さにより、接続直後(GATTの最初のリクエスト
+// 送信直後)にリンクが切れて djictl が無言でハングすることが4〜5割の確率で起きる
+// (2026-09-08に実機で14回試行して成功6回。debugログの `device.go:130 connected` →
+// `peripheral_linux.go:505 sendReq` → `l2cap.go:56 /loop`(L2CAPループ終了)で確認。
+// djictlはこのGATTリクエストにタイムアウトを持たないため、以降ログが一切出なくなる)。
+// 一方で成功時は「found device」から「start live stream」まで約7秒、途中のログ間隔も
+// 最長5秒程度なので、20秒の無音は「外れを引いた」と判断してよい。
+// 単発では失敗しても数回リトライすればほぼ通るため、諦める前に自動で再試行する。
+const MAX_START_ATTEMPTS = 3;
+const START_RETRY_DELAY_MS = 3_000;
+// SIGTERMで終わらないハングプロセスへの最終手段。強制終了はBluetooth側の状態を
+// 壊しうる(deploy/NOTES.md参照)ため、通常のリトライではまずSIGTERMで待つ。
+const KILL_GRACE_MS = 10_000;
+let startAttempt = 0;
+let stopRequestedByUser = false;
+let retryTimer = null;
 
 // 画質設定。/cam start でオプション指定が無ければこの値(前回値)を使う。
 // 初期値は自宅WiFiの電波状況を踏まえた安定寄りの設定(1080p/6000Kbpsのdjictlデフォルトより控えめ)。
@@ -191,9 +208,16 @@ function buildStreamEmbed({ ended, viewerUrl }) {
 }
 
 function startCameraStream() {
-  if (cameraProcess) {
+  if (cameraProcess || retryTimer) {
     throw new Error("すでに配信指示中/配信中です(先に /cam stop してください)");
   }
+  startAttempt = 0;
+  stopRequestedByUser = false;
+  return spawnCameraProcess();
+}
+
+function spawnCameraProcess() {
+  startAttempt += 1;
 
   // 実機の `djictl ble --help` / `djictl ble connect-wifi-and-start-streaming --help`
   // で確認済みのフラグ構成(2026-07-26時点、djictl実行バイナリ 1.26系ビルド)。
@@ -251,6 +275,18 @@ function startCameraStream() {
     cameraProcess = null;
     clearInterval(watchdogInterval);
     watchdogInterval = null;
+    // BLE接続に失敗するとdjictlが無言でハングした末に自滅することがある
+    // (2026-09-08の事例: 「found device」の89秒後に code=1 で終了)。
+    // watchdog経由の停止(watchdogTriggered)と /cam stop(stopRequestedByUser)は
+    // それぞれの側でリトライ要否を判断するので、ここでは扱わない。
+    if (
+      !streamingStarted &&
+      !watchdogTriggered &&
+      !stopRequestedByUser &&
+      startAttempt < MAX_START_ATTEMPTS
+    ) {
+      scheduleStartRetry("配信開始前にdjictlが終了しました");
+    }
   });
 
   return new Promise((resolve, reject) => {
@@ -262,6 +298,40 @@ function startCameraStream() {
   });
 }
 
+// ハングしたdjictlを終了させる。SIGTERMで終わらない場合のみSIGKILLする。
+function killCameraProcess() {
+  if (!cameraProcess) return Promise.resolve();
+  const proc = cameraProcess;
+  proc.kill("SIGTERM");
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      console.error(
+        `[djictl] SIGTERMで${KILL_GRACE_MS / 1000}秒以内に終了しなかったためSIGKILLします`
+      );
+      proc.kill("SIGKILL");
+      resolve();
+    }, KILL_GRACE_MS);
+    proc.once("exit", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+}
+
+function scheduleStartRetry(reason) {
+  console.error(
+    `[djictl] ${reason}。BLE接続の再試行を行います(${startAttempt}/${MAX_START_ATTEMPTS}回目まで)`
+  );
+  clearTimeout(retryTimer);
+  retryTimer = setTimeout(() => {
+    retryTimer = null;
+    if (stopRequestedByUser || cameraProcess) return;
+    spawnCameraProcess().catch((err) => {
+      console.error("再試行の起動に失敗:", err);
+    });
+  }, START_RETRY_DELAY_MS);
+}
+
 async function checkWatchdog() {
   if (!cameraProcess || lastOutputAt === null || watchdogTriggered) return;
   const silenceMs = Date.now() - lastOutputAt;
@@ -271,6 +341,17 @@ async function checkWatchdog() {
   if (silenceMs < limit) return;
 
   watchdogTriggered = true;
+
+  // 配信開始前の無音はBLEリンク断(高確率で起きる)なので、諦める前に張り直す。
+  if (!streamingStarted && startAttempt < MAX_START_ATTEMPTS) {
+    await killCameraProcess();
+    if (stopRequestedByUser) return;
+    scheduleStartRetry(
+      `配信開始前に${Math.round(silenceMs / 1000)}秒無応答(BLEリンク断とみられます)`
+    );
+    return;
+  }
+
   console.error(
     `[djictl] ${Math.round(silenceMs / 1000)}秒間カメラからの応答がないため、ハングとみなしてプロセスを自動停止します`
   );
@@ -278,11 +359,12 @@ async function checkWatchdog() {
   await stopCameraStream();
 
   if (notifyChannelId) {
+    const message = streamingStarted
+      ? "⚠️ カメラからの応答が一定時間なかったため、配信監視プロセスを自動的に停止しました。ネットワーク状況を確認のうえ、再度 `/cam start` をお試しください。"
+      : `⚠️ カメラへのBLE接続に${MAX_START_ATTEMPTS}回連続で失敗したため、配信開始を中止しました。カメラの電源を入れ直してから、再度 \`/cam start\` をお試しください。`;
     try {
       const channel = await client.channels.fetch(notifyChannelId);
-      await channel.send(
-        "⚠️ カメラからの応答が一定時間なかったため、配信監視プロセスを自動的に停止しました。ネットワーク状況を確認のうえ、再度 `/cam start` をお試しください。"
-      );
+      await channel.send(message);
     } catch (err) {
       console.error("ウォッチドッグ通知の送信に失敗:", err);
     }
@@ -297,8 +379,14 @@ async function checkWatchdog() {
 const STOP_WAIT_TIMEOUT_MS = 10_000;
 
 function stopCameraStream() {
+  // リトライ待機中(プロセス不在)の停止指示も「配信指示中の停止」として扱う。
+  stopRequestedByUser = true;
+  const hadPendingRetry = retryTimer !== null;
+  clearTimeout(retryTimer);
+  retryTimer = null;
+
   if (!cameraProcess) {
-    return Promise.resolve({ wasRunning: false, exited: false });
+    return Promise.resolve({ wasRunning: hadPendingRetry, exited: true });
   }
   const proc = cameraProcess;
   proc.kill("SIGTERM");

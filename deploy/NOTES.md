@@ -92,6 +92,44 @@ djictl ble --filter-device-addr <addr> connect-wifi-and-start-streaming \
 再起動後は `djictl ble --filter-device-addr <addr> battery-info` 等の軽量コマンドで
 接続が維持できる(テレメトリを継続受信できる)ことを確認してから `/cam start` を試すとよい。
 
+### ハマったポイント: 上記の接続断が「毎回」ではなく「4〜5割の確率」で起きるケース(2026-09-08)
+
+`/cam start` が失敗したり成功したりを繰り返す場合、上記と同じ接続断が確率的に
+起きている。同一条件で14回試して成功6回だった。**この状態ではラズパイ再起動は不要**
+(再起動が要るのは「毎回」失敗するケース)。
+
+切り分け結果として、以下はいずれも原因ではないことを確認済み:
+
+- `--control-socket`(ジンバル用Unixソケット)の有無・ソケットファイルの残骸
+- `bluetooth.service`(bluetoothd)とdjictlのhci0競合
+  — bluetoothdを止めて4回試すと逆に1勝3敗だった
+- カーネル側のBluetoothエラー(`dmesg` にHCIエラーは一切出ない)
+
+`--log-level debug` で見たときの失敗パターンの見分け方:
+
+```
+device.go:130 connected
+peripheral_linux.go:505 sendReq: sent the request to send
+l2cap.go:56 /loop          ← L2CAPループが即終了 = リンクが落ちた
+（以降ログが一切出ない。djictlはこのGATTリクエストにタイムアウトを持たない）
+```
+
+成功時はここから `requesting to pair`(約1秒)→ `prepare to live stream` →
+`requesting to connect to WiFi`(約4秒)→ `start live stream`(約7秒)と進み、
+以降はバッテリー行が毎秒出る。**途中のログ間隔は最長でも5秒程度**なので、
+配信開始前の20秒以上の無音は接続失敗と断定してよい。
+
+**対処(実装済み):** `bot/index.js` のwatchdogを、配信開始前の無音については
+「諦める」のではなく「djictlを終了させて張り直す」ように変更した
+(`MAX_START_ATTEMPTS` = 3、`WATCHDOG_STARTUP_SILENCE_MS` を90秒→20秒に短縮)。
+成功率5割でも3回試せば約9割通る。3回連続で失敗した場合のみDiscordに
+「カメラの電源を入れ直してから再試行してください」と通知して中止する。
+
+リトライ経路の動作確認は、`.env` の `CAMERA_BLE_ADDRESS` を存在しないアドレスに
+一時的に差し替えてBotを再起動し、`/cam start` 相当を叩くと再現できる
+(実機のBLEを使わずに3回リトライ→中止まで確認できる)。
+
+
 ## 2. MediaMTX の導入
 
 ```
