@@ -6,15 +6,17 @@
 <title>Pocket3 ライブカメラ</title>
 <style>
   :root {
-    --bg: #0f0f0f;
-    --surface: #181818;
-    --surface-2: #212121;
-    --border: #303030;
-    --text: #f1f1f1;
-    --text-dim: #aaaaaa;
-    --accent: #ff3b3b;
-    --accent-dim: #7a1f1f;
-    --ok: #3ba55d;
+    --bg: #08090b;
+    --surface: #131417;
+    --surface-2: #1b1d21;
+    --border: #2b2e34;
+    --text: #f2f3f5;
+    --text-dim: #888c94;
+    --accent: #ff1744;
+    --accent-2: #ff5c3d;
+    --accent-dim: #4d0f1c;
+    --accent-glow: rgba(255, 23, 68, 0.45);
+    --ok: #00e68a;
   }
   * { box-sizing: border-box; }
   html, body {
@@ -28,6 +30,9 @@
     display: flex;
     justify-content: center;
     padding: 16px;
+    background:
+      radial-gradient(ellipse 900px 500px at 50% -10%, rgba(255, 23, 68, 0.12), transparent 60%),
+      var(--bg);
   }
   .page {
     width: 100%;
@@ -36,55 +41,24 @@
     flex-direction: column;
     gap: 16px;
   }
-
-  /* --- 再生ソース切り替えタブ --- */
-  .source-tabs { display: flex; gap: 8px; }
-  .source-tab {
-    background: var(--surface-2);
-    border: 1px solid var(--border);
-    color: var(--text-dim);
-    border-radius: 999px;
-    padding: 6px 14px;
-    font-size: 13px;
-    font-weight: 600;
-    cursor: pointer;
-  }
-  .source-tab.active { color: #fff; border-color: var(--accent); background: var(--accent-dim); }
-  .source-note { font-size: 12px; color: var(--text-dim); margin: -8px 0 0; }
-  .tab-panel-hidden { display: none; }
+  ::selection { background: var(--accent); color: #fff; }
 
   /* --- プレーヤー --- */
-  .player, .youtube-player {
+  .player {
     position: relative;
     width: 100%;
     aspect-ratio: 16 / 9;
     background: #000;
-    border-radius: 12px;
+    border-radius: 4px;
     overflow: hidden;
-    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
+    border: 1px solid var(--border);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.03) inset;
   }
   video {
     width: 100%;
     height: 100%;
     display: block;
     background: #000;
-  }
-  .youtube-player iframe {
-    width: 100%;
-    height: 100%;
-    border: 0;
-    display: block;
-  }
-  .youtube-empty-msg {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 24px;
-    text-align: center;
-    font-size: 14px;
-    color: var(--text-dim);
   }
 
   .badge {
@@ -94,25 +68,37 @@
     align-items: center;
     gap: 6px;
     padding: 4px 10px;
-    border-radius: 999px;
+    border-radius: 3px;
     font-size: 12px;
-    font-weight: 600;
-    letter-spacing: 0.03em;
-    background: rgba(0, 0, 0, 0.6);
-    backdrop-filter: blur(4px);
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    background: rgba(8, 9, 11, 0.75);
+    backdrop-filter: blur(6px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
   }
-  .badge-live { left: 10px; color: #fff; }
+  .badge-live {
+    left: 10px;
+    color: #fff;
+    font-family: -apple-system, "Segoe UI", monospace;
+  }
+  .badge-live:not(.offline) {
+    background: linear-gradient(135deg, var(--accent), #b3001f);
+    border-color: transparent;
+    box-shadow: 0 0 14px var(--accent-glow);
+  }
   .badge-live .dot {
-    width: 8px; height: 8px; border-radius: 50%;
-    background: var(--accent);
-    animation: pulse 1.4s infinite;
+    width: 7px; height: 7px; border-radius: 50%;
+    background: #fff;
+    animation: pulse 1.2s infinite;
   }
-  .badge-live.offline .dot { background: #777; animation: none; }
+  .badge-live.offline .dot { background: #666; animation: none; }
   .badge-battery { right: 10px; color: #fff; }
+  .badge-battery .icon { width: 22px; height: 12px; }
+  .badge-battery .battery-fill { transition: width 0.3s, fill 0.3s; }
 
   @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.35; }
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.4; transform: scale(0.8); }
   }
 
   .center-play {
@@ -127,7 +113,17 @@
     transition: opacity 0.15s;
   }
   .center-play.hidden { opacity: 0; pointer-events: none; }
-  .center-play svg { width: 64px; height: 64px; filter: drop-shadow(0 2px 6px rgba(0,0,0,0.6)); }
+  .center-play svg {
+    width: 64px;
+    height: 64px;
+    padding: 18px;
+    border-radius: 50%;
+    background: rgba(255, 23, 68, 0.15);
+    border: 2px solid var(--accent);
+    filter: drop-shadow(0 0 18px var(--accent-glow));
+    transition: transform 0.15s, background 0.15s;
+  }
+  .center-play:hover svg { transform: scale(1.06); background: rgba(255, 23, 68, 0.28); }
 
   .controls {
     position: absolute;
@@ -155,17 +151,61 @@
     cursor: pointer;
     display: flex;
     align-items: center;
+    transition: color 0.12s, filter 0.12s;
   }
+  .controls button:hover { color: var(--accent-2); filter: drop-shadow(0 0 6px var(--accent-glow)); }
   .controls button svg { width: 22px; height: 22px; }
   .volume-row { display: flex; align-items: center; gap: 4px; }
   .volume-row input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
     width: 70px;
-    accent-color: var(--accent);
+    height: 3px;
+    border: none;
+    border-radius: 2px;
+    background: linear-gradient(to right,
+      #fff var(--vol-pct, 100%),
+      rgba(255, 255, 255, 0.25) var(--vol-pct, 100%));
+    cursor: pointer;
+  }
+  .volume-row input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #fff;
+    cursor: pointer;
+    margin-top: -4.5px;
+    box-shadow: none;
+    transition: transform 0.1s;
+  }
+  .volume-row input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
+  .volume-row input[type="range"]::-moz-range-thumb {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #fff;
+    cursor: pointer;
+    border: none;
+    box-shadow: none;
+  }
+  .volume-row input[type="range"]::-moz-range-progress {
+    background: #fff;
+    height: 3px;
+    border-radius: 2px;
+  }
+  .volume-row input[type="range"]::-moz-range-track {
+    background: rgba(255, 255, 255, 0.25);
+    height: 3px;
+    border-radius: 2px;
+    border: none;
   }
   .controls .status-text {
     flex: 1;
     font-size: 13px;
-    color: #ddd;
+    font-family: "Consolas", monospace;
+    color: #ccc;
+    letter-spacing: 0.01em;
   }
 
   /* --- タイトル行 --- */
@@ -176,16 +216,28 @@
     gap: 12px;
     flex-wrap: wrap;
   }
-  .info h1 { font-size: 18px; margin: 0; }
   .info .sub { font-size: 13px; color: var(--text-dim); }
 
   /* --- 操作パネル --- */
   .panel {
+    position: relative;
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 12px;
+    border-radius: 4px;
     overflow: hidden;
+    transition: border-color 0.15s;
   }
+  .panel::before {
+    content: "";
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 3px;
+    background: linear-gradient(180deg, var(--accent), var(--accent-2));
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .panel.open::before { opacity: 1; }
+  .panel.open { border-color: #3a3d44; }
   .panel-header {
     width: 100%;
     display: flex;
@@ -196,11 +248,15 @@
     border: none;
     color: var(--text);
     font-size: 14px;
-    font-weight: 600;
+    font-weight: 700;
+    letter-spacing: 0.01em;
     cursor: pointer;
   }
+  .panel-header:hover { background: rgba(255, 255, 255, 0.02); }
+  .panel-header-label { display: flex; align-items: center; gap: 8px; }
+  .icon { width: 18px; height: 18px; fill: currentColor; flex-shrink: 0; }
   .panel-header .chev { transition: transform 0.15s; color: var(--text-dim); }
-  .panel.open .panel-header .chev { transform: rotate(180deg); }
+  .panel.open .panel-header .chev { transform: rotate(180deg); color: var(--accent); }
   .panel-body {
     display: none;
     padding: 0 16px 16px;
@@ -214,31 +270,55 @@
     background: var(--surface-2);
     border: 1px solid var(--border);
     color: var(--text);
-    border-radius: 8px;
+    border-radius: 3px;
     padding: 8px 10px;
     font-size: 14px;
+  }
+  input[type="password"]:focus, select:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent);
   }
   input[type="password"] { flex: 1; min-width: 0; }
 
   .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
     border: none;
-    border-radius: 8px;
+    border-radius: 3px;
     padding: 9px 16px;
-    font-size: 14px;
-    font-weight: 600;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
     cursor: pointer;
+    transition: filter 0.12s, box-shadow 0.12s, transform 0.06s;
   }
-  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
-  .btn-primary { background: var(--accent); color: #fff; }
-  .btn-secondary { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); }
+  .btn:disabled { opacity: 0.35; cursor: not-allowed; }
+  .btn:not(:disabled):hover { filter: brightness(1.12); }
+  .btn:not(:disabled):active { transform: translateY(1px); }
+  .btn-primary {
+    background: linear-gradient(135deg, var(--accent), #c4001a);
+    color: #fff;
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08) inset;
+  }
+  .btn-primary:not(:disabled):hover { box-shadow: 0 0 16px var(--accent-glow); }
+  .btn-secondary {
+    background: var(--surface-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+  .btn-secondary:not(:disabled):hover { border-color: #4a4d54; }
 
   /* --- ロック状態表示 --- */
   .lock-status {
     display: flex;
     align-items: center;
     gap: 6px;
-    font-size: 13px;
-    font-weight: 600;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
     color: var(--text-dim);
     white-space: nowrap;
   }
@@ -251,10 +331,66 @@
   .settings-row select { flex: 1; min-width: 100px; }
   .settings-row select:disabled { opacity: 0.5; }
 
+  /* --- スライダー共通(ゲーミング風カスタムthumb) --- */
+  input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    height: 4px;
+    background: var(--surface-2);
+    border-radius: 0;
+    border: 1px solid var(--border);
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    background: var(--accent);
+    border-radius: 2px;
+    cursor: pointer;
+    box-shadow: 0 0 8px var(--accent-glow);
+    border: none;
+    margin-top: -5px;
+  }
+  input[type="range"]::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    background: var(--accent);
+    border-radius: 2px;
+    cursor: pointer;
+    box-shadow: 0 0 8px var(--accent-glow);
+    border: none;
+  }
+  input[type="range"]::-moz-range-track {
+    height: 4px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+  }
+
+  /* --- 映像調整(明るさ/コントラスト/彩度/ガンマ) --- */
+  .filter-row { display: flex; flex-direction: column; gap: 6px; }
+  .filter-row .filter-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--text-dim);
+  }
+  .filter-row .filter-value {
+    color: var(--accent);
+    font-variant-numeric: tabular-nums;
+    font-family: "Consolas", monospace;
+  }
+  .filter-row input[type="range"] { width: 100%; }
+  .filter-presets { display: flex; gap: 8px; flex-wrap: wrap; }
+  .filter-presets .btn { flex: 1; min-width: 120px; }
+
   .apply-row { display: flex; align-items: center; gap: 10px; }
   .pending-badge {
-    font-size: 12px;
-    color: #f5b942;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    color: #ffb300;
     display: none;
     align-items: center;
     gap: 4px;
@@ -262,14 +398,15 @@
   .pending-badge.show { display: inline-flex; }
   .pending-badge .dot2 {
     width: 6px; height: 6px; border-radius: 50%;
-    background: #f5b942;
+    background: #ffb300;
+    box-shadow: 0 0 6px #ffb300;
   }
 
   .actions-row { display: flex; gap: 8px; }
   .actions-row .btn { flex: 1; }
 
   .msg { font-size: 13px; min-height: 18px; }
-  .msg.error { color: #f28b82; }
+  .msg.error { color: #ff6b6b; }
   .msg.ok { color: var(--ok); }
 
   /* --- ジンバル操作(実験的機能) --- */
@@ -281,6 +418,9 @@
     border-top: 1px solid var(--border);
   }
   .gimbal-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
     font-size: 13px;
     color: var(--text-dim);
   }
@@ -300,36 +440,50 @@
   .dpad-right { grid-area: right; }
   .dpad-down { grid-area: down; }
   .dpad-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
     background: var(--surface-2);
     border: 1px solid var(--border);
     color: var(--text);
-    border-radius: 8px;
-    font-size: 18px;
+    border-radius: 3px;
     cursor: pointer;
     touch-action: none;
     user-select: none;
+    transition: border-color 0.1s;
   }
   .dpad-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-  .dpad-btn:not(:disabled):active { background: var(--accent-dim); }
+  .dpad-btn:not(:disabled):hover { border-color: var(--accent); }
+  .dpad-btn:not(:disabled):active { background: var(--accent-dim); border-color: var(--accent); }
 </style>
 </head>
 <body>
+  <svg width="0" height="0" style="position:absolute; overflow:hidden;">
+    <filter id="gammaFilter" color-interpolation-filters="sRGB">
+      <feComponentTransfer>
+        <feFuncR id="gammaFuncR" type="gamma" exponent="1" amplitude="1" offset="0"></feFuncR>
+        <feFuncG id="gammaFuncG" type="gamma" exponent="1" amplitude="1" offset="0"></feFuncG>
+        <feFuncB id="gammaFuncB" type="gamma" exponent="1" amplitude="1" offset="0"></feFuncB>
+      </feComponentTransfer>
+    </filter>
+  </svg>
   <div class="page">
-    <div class="source-tabs" id="sourceTabs">
-      <button class="source-tab active" data-source="hls">低遅延(HLS)</button>
-      <button class="source-tab" data-source="youtube">YouTube</button>
-    </div>
-    <div class="source-note tab-panel-hidden" id="youtubeNote">
-      ※YouTube配信が非公開設定の場合、視聴を許可されたGoogleアカウントでのログインが必要です。
-    </div>
-
     <div class="player" id="player">
-      <video id="video" muted autoplay playsinline></video>
+      <video id="video" muted autoplay playsinline disablepictureinpicture></video>
+      <canvas id="pipCanvas" style="display:none;"></canvas>
+      <video id="pipVideo" muted playsinline style="display:none;"></video>
 
       <div class="badge badge-live offline" id="liveBadge">
         <span class="dot"></span><span id="liveBadgeText">OFFLINE</span>
       </div>
-      <div class="badge badge-battery" id="batteryBadge" style="display:none;">🔋 <span id="batteryText">--%</span></div>
+      <div class="badge badge-battery" id="batteryBadge" style="display:none;">
+        <svg class="icon" viewBox="0 0 24 12">
+          <rect x="1" y="1" width="19" height="10" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.6"/>
+          <rect x="21.5" y="4" width="2" height="4" rx="1" fill="currentColor"/>
+          <rect id="batteryFillRect" class="battery-fill" x="3.5" y="3" width="15" height="6" rx="1" fill="currentColor"/>
+        </svg>
+        <span id="batteryText">--%</span>
+      </div>
 
       <div class="center-play" id="centerPlay">
         <svg viewBox="0 0 24 24" fill="#fff"><path d="M8 5v14l11-7z"/></svg>
@@ -346,32 +500,69 @@
           <input type="range" id="volume" min="0" max="1" step="0.05" value="1">
         </div>
         <div class="status-text" id="controlsStatus">読み込み中...</div>
+        <button id="pipBtn" title="ピクチャーインピクチャー(映像調整を維持したまま)">
+          <svg viewBox="0 0 24 24" fill="#fff"><path d="M19 7h-8v6h8V7zm2-4H3c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16.01H3V4.98h18v14.03z"/></svg>
+        </button>
         <button id="fullscreenBtn" title="全画面">
           <svg viewBox="0 0 24 24" fill="#fff"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
         </button>
       </div>
     </div>
 
-    <div class="youtube-player tab-panel-hidden" id="youtubePlayer">
-      <iframe id="youtubeIframe" style="display:none;" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>
-      <div class="youtube-empty-msg" id="youtubeEmptyMsg">YouTube配信は現在利用できません。</div>
+    <div class="info">
+      <div class="sub" id="subStatus">状態を確認中...</div>
     </div>
 
-    <div class="info">
-      <div>
-        <h1>Pocket3 ライブカメラ</h1>
-        <div class="sub" id="subStatus">状態を確認中...</div>
+    <div class="panel" id="videoAdjustPanel">
+      <button class="panel-header" id="videoAdjustToggle">
+        <span class="panel-header-label">
+          <svg class="icon" viewBox="0 0 24 24"><path d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9c.83 0 1.5-.67 1.5-1.5 0-.39-.15-.74-.39-1.01-.23-.26-.38-.61-.38-.99 0-.83.67-1.5 1.5-1.5H16c2.76 0 5-2.24 5-5 0-4.42-4.03-8-9-8zm-5.5 9c-.83 0-1.5-.67-1.5-1.5S5.67 9 6.5 9 8 9.67 8 10.5 7.33 12 6.5 12zm3-4C8.67 8 8 7.33 8 6.5S8.67 5 9.5 5s1.5.67 1.5 1.5S10.33 8 9.5 8zm5 0c-.83 0-1.5-.67-1.5-1.5S13.67 5 14.5 5s1.5.67 1.5 1.5S15.33 8 14.5 8zm3 4c-.83 0-1.5-.67-1.5-1.5S16.67 9 17.5 9s1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/></svg>
+          <span>映像調整(暗所向け)</span>
+        </span>
+        <svg class="icon chev" viewBox="0 0 24 24"><path d="M16.59 8.59L12 13.17 7.41 8.59 6 10l6 6 6-6z"/></svg>
+      </button>
+      <div class="panel-body">
+        <div class="filter-row">
+          <label class="filter-label"><span>明るさ</span><span class="filter-value" id="brightnessValue">1.00</span></label>
+          <input type="range" id="brightnessRange" min="0.5" max="2.5" step="0.05" value="1">
+        </div>
+        <div class="filter-row">
+          <label class="filter-label"><span>ガンマ(暗部の持ち上げ)</span><span class="filter-value" id="gammaValue">1.00</span></label>
+          <input type="range" id="gammaRange" min="0.4" max="3" step="0.05" value="1">
+        </div>
+        <div class="filter-row">
+          <label class="filter-label"><span>コントラスト</span><span class="filter-value" id="contrastValue">1.00</span></label>
+          <input type="range" id="contrastRange" min="0.5" max="2" step="0.05" value="1">
+        </div>
+        <div class="filter-row">
+          <label class="filter-label"><span>彩度</span><span class="filter-value" id="saturateValue">1.00</span></label>
+          <input type="range" id="saturateRange" min="0" max="2" step="0.05" value="1">
+        </div>
+        <div class="filter-presets">
+          <button class="btn btn-secondary" id="nightPresetBtn">
+            <svg class="icon" viewBox="0 0 24 24"><path d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9 9-4.03 9-9c0-.46-.04-.92-.1-1.36-.98 1.37-2.58 2.26-4.4 2.26-3.03 0-5.5-2.47-5.5-5.5 0-1.82.89-3.42 2.26-4.4-.44-.06-.9-.1-1.36-.1z"/></svg>
+            暗所プリセット
+          </button>
+          <button class="btn btn-secondary" id="resetFilterBtn">リセット</button>
+        </div>
+        <div class="msg" id="filterNote">この調整は視聴中の映像の見え方だけを変えます(配信・録画自体の明るさは変わりません)。</div>
       </div>
     </div>
 
     <div class="panel" id="panel">
       <button class="panel-header" id="panelToggle">
-        <span>🎛 カメラを操作</span>
-        <span class="chev">▾</span>
+        <span class="panel-header-label">
+          <svg class="icon" viewBox="0 0 24 24"><path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/></svg>
+          <span>カメラを操作</span>
+        </span>
+        <svg class="icon chev" viewBox="0 0 24 24"><path d="M16.59 8.59L12 13.17 7.41 8.59 6 10l6 6 6-6z"/></svg>
       </button>
       <div class="panel-body">
         <div class="field-row lock-row" id="lockRow">
-          <span class="lock-status" id="lockStatus">🔒 ロック中</span>
+          <span class="lock-status" id="lockStatus">
+            <svg class="icon" viewBox="0 0 24 24"><path id="lockIconPath" d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zM9 6c0-1.66 1.34-3 3-3s3 1.34 3 3v2H9V6zm9 14H6V10h12v10z"/></svg>
+            <span id="lockStatusText">ロック中</span>
+          </span>
           <input type="password" id="password" class="lock-input" placeholder="操作用パスワード">
           <button class="btn btn-secondary" id="unlockBtn">ロック解除</button>
           <button class="btn btn-secondary" id="relockBtn">ロックする</button>
@@ -401,8 +592,14 @@
         </div>
 
         <div class="actions-row">
-          <button class="btn btn-primary" id="startBtn" disabled>▶ 配信開始</button>
-          <button class="btn btn-secondary" id="stopBtn" disabled>⏹ 配信を停止</button>
+          <button class="btn btn-primary" id="startBtn" disabled>
+            <svg class="icon" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+            配信開始
+          </button>
+          <button class="btn btn-secondary" id="stopBtn" disabled>
+            <svg class="icon" viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg>
+            配信を停止
+          </button>
         </div>
 
         <div class="msg" id="panelMsg"></div>
@@ -411,12 +608,23 @@
              (2026-08-23、deploy/djictl-patches/README.md参照)。動作しない機能をユーザーに
              見せないよう非表示にしている。Mimoアプリの通信解析で正しい経路が分かれば復活させる。 -->
         <div class="gimbal-panel" style="display: none;">
-          <div class="gimbal-header">🎮 ジンバル操作(実験的機能・配信中のみ。実機で動かない場合があります)</div>
+          <div class="gimbal-header">
+            <svg class="icon" viewBox="0 0 24 24"><path d="M21.58 16.09l-1.09-7.66C20.21 6.46 18.52 5 16.53 5H7.47C5.48 5 3.79 6.46 3.51 8.43l-1.09 7.66C2.2 17.63 3.39 19 4.94 19c.68 0 1.32-.27 1.8-.75L9 16h6l2.25 2.25c.48.48 1.13.75 1.8.75 1.56 0 2.75-1.37 2.53-2.91zM11 11H9v2H8v-2H6v-1h2V8h1v2h2v1zm4-1c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm2 3c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1z"/></svg>
+            <span>ジンバル操作(実験的機能・配信中のみ。実機で動かない場合があります)</span>
+          </div>
           <div class="dpad">
-            <button class="dpad-btn dpad-up" data-pitch="20" data-yaw="0" disabled title="上">▲</button>
-            <button class="dpad-btn dpad-left" data-pitch="0" data-yaw="-30" disabled title="左">◀</button>
-            <button class="dpad-btn dpad-right" data-pitch="0" data-yaw="30" disabled title="右">▶</button>
-            <button class="dpad-btn dpad-down" data-pitch="-20" data-yaw="0" disabled title="下">▼</button>
+            <button class="dpad-btn dpad-up" data-pitch="20" data-yaw="0" disabled title="上">
+              <svg class="icon" viewBox="0 0 24 24"><path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z"/></svg>
+            </button>
+            <button class="dpad-btn dpad-left" data-pitch="0" data-yaw="-30" disabled title="左">
+              <svg class="icon" viewBox="0 0 24 24"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+            </button>
+            <button class="dpad-btn dpad-right" data-pitch="0" data-yaw="30" disabled title="右">
+              <svg class="icon" viewBox="0 0 24 24"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z"/></svg>
+            </button>
+            <button class="dpad-btn dpad-down" data-pitch="-20" data-yaw="0" disabled title="下">
+              <svg class="icon" viewBox="0 0 24 24"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z"/></svg>
+            </button>
           </div>
           <div class="msg" id="gimbalMsg"></div>
         </div>
@@ -433,12 +641,32 @@
     // --- HLS再生 ---
     var hls = null;
     function loadStream() {
+      if (hls) {
+        hls.destroy();
+        hls = null;
+      }
       if (Hls.isSupported()) {
         hls = new Hls({ lowLatencyMode: true });
         hls.loadSource(streamUrl);
         hls.attachMedia(video);
         hls.on(Hls.Events.MANIFEST_PARSED, function () {
           video.play().catch(function () {});
+        });
+        // ネットワーク瞬断・セグメント欠落等で映像が止まったまま復帰しないことがあるため、
+        // fatalエラー時はhls.js標準のリカバリを試み、それでも無理なら丸ごと読み込み直す
+        hls.on(Hls.Events.ERROR, function (event, data) {
+          if (!data.fatal) return;
+          switch (data.type) {
+            case Hls.ErrorTypes.NETWORK_ERROR:
+              hls.startLoad();
+              break;
+            case Hls.ErrorTypes.MEDIA_ERROR:
+              hls.recoverMediaError();
+              break;
+            default:
+              reloadStream();
+              break;
+          }
         });
       } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
         video.src = streamUrl;
@@ -447,7 +675,36 @@
         });
       }
     }
+    function reloadStream() {
+      loadStream();
+    }
     loadStream();
+
+    // --- stall監視: 配信中(live)なのに映像が進んでいない場合、自動で読み込み直す ---
+    // hls.jsのERRORイベントが発火しない「無言で止まる」ケース(F5すれば治る、というやつ)への対策。
+    var STALL_CHECK_INTERVAL_MS = 7000;
+    var STALL_RELOAD_AFTER_CHECKS = 2; // 約14秒進みがなければ再接続
+    var lastStallCheckTime = -1;
+    var stallCheckCount = 0;
+    setInterval(function () {
+      if (!lastStatus.live) {
+        stallCheckCount = 0;
+        lastStallCheckTime = -1;
+        return;
+      }
+      if (video.paused || video.seeking) return;
+      if (video.currentTime === lastStallCheckTime) {
+        stallCheckCount++;
+        if (stallCheckCount >= STALL_RELOAD_AFTER_CHECKS) {
+          stallCheckCount = 0;
+          controlsStatus.textContent = "映像が停止したため再接続しています...";
+          reloadStream();
+        }
+      } else {
+        stallCheckCount = 0;
+      }
+      lastStallCheckTime = video.currentTime;
+    }, STALL_CHECK_INTERVAL_MS);
 
     // --- カスタムコントロール ---
     var playBtn = document.getElementById("playBtn");
@@ -461,7 +718,8 @@
 
     var ICON_PLAY = '<path d="M8 5v14l11-7z"/>';
     var ICON_PAUSE = '<path d="M6 5h4v14H6zM14 5h4v14h-4z"/>';
-    var ICON_VOL = '<path d="M3 10v4h4l5 5V5L7 10H3z"/>';
+    var ICON_VOL_HIGH = '<path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.26 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>';
+    var ICON_VOL_LOW = '<path d="M18.5 12c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.26 2.5-4.02zM5 9v6h4l5 5V4L9 9H5z"/>';
     var ICON_MUTE = '<path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.42.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06a8.99 8.99 0 003.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/>';
 
     function setPaused(paused) {
@@ -480,7 +738,16 @@
     video.addEventListener("pause", function () { setPaused(true); });
 
     function refreshMuteIcon() {
-      muteIcon.innerHTML = (video.muted || video.volume === 0) ? ICON_MUTE : ICON_VOL;
+      var effectiveVolume = video.muted ? 0 : video.volume;
+      volume.value = effectiveVolume;
+      if (effectiveVolume === 0) {
+        muteIcon.innerHTML = ICON_MUTE;
+      } else if (effectiveVolume < 0.5) {
+        muteIcon.innerHTML = ICON_VOL_LOW;
+      } else {
+        muteIcon.innerHTML = ICON_VOL_HIGH;
+      }
+      volume.style.setProperty("--vol-pct", (effectiveVolume * 100) + "%");
     }
     muteBtn.addEventListener("click", function () {
       video.muted = !video.muted;
@@ -503,6 +770,79 @@
       }
     });
 
+    // --- ピクチャーインピクチャー(映像調整フィルターを維持) ---
+    // ブラウザ標準のPiPは<video>のデコード映像をCSSフィルターを介さず直接別ウィンドウへ渡すため、
+    // 明るさ/ガンマ等の調整が反映されない。ここではvideoを一度canvasに焼き込んでフィルターを適用し、
+    // そのcanvasの映像(captureStream)を別videoに流してPiP化することで調整を維持する。
+    var pipBtn = document.getElementById("pipBtn");
+    var pipCanvas = document.getElementById("pipCanvas");
+    var pipVideo = document.getElementById("pipVideo");
+    var pipCtx = pipCanvas.getContext("2d");
+    var pipRafId = null;
+    var pipStream = null;
+
+    function pipSupported() {
+      return "requestPictureInPicture" in pipVideo && typeof pipCanvas.captureStream === "function";
+    }
+
+    function pipDrawLoop() {
+      if (video.videoWidth && video.videoHeight) {
+        if (pipCanvas.width !== video.videoWidth || pipCanvas.height !== video.videoHeight) {
+          pipCanvas.width = video.videoWidth;
+          pipCanvas.height = video.videoHeight;
+        }
+        pipCtx.filter =
+          "brightness(" + brightnessRange.value + ") " +
+          "contrast(" + contrastRange.value + ") " +
+          "saturate(" + saturateRange.value + ") " +
+          "url(#gammaFilter)";
+        pipCtx.drawImage(video, 0, 0, pipCanvas.width, pipCanvas.height);
+      }
+      pipRafId = requestAnimationFrame(pipDrawLoop);
+    }
+
+    function stopPipLoop() {
+      if (pipRafId) {
+        cancelAnimationFrame(pipRafId);
+        pipRafId = null;
+      }
+      if (pipStream) {
+        pipStream.getTracks().forEach(function (t) { t.stop(); });
+        pipStream = null;
+      }
+    }
+
+    pipBtn.addEventListener("click", function () {
+      if (document.pictureInPictureElement === pipVideo) {
+        document.exitPictureInPicture().catch(function () {});
+        return;
+      }
+      if (!pipSupported()) {
+        controlsStatus.textContent = "このブラウザはPiP中の映像調整維持に対応していません";
+        return;
+      }
+      pipCanvas.width = video.videoWidth || 1280;
+      pipCanvas.height = video.videoHeight || 720;
+      pipStream = pipCanvas.captureStream(30);
+      try {
+        if (typeof video.captureStream === "function") {
+          video.captureStream().getAudioTracks().forEach(function (t) { pipStream.addTrack(t); });
+        }
+      } catch (e) {}
+      pipVideo.srcObject = pipStream;
+      pipVideo.play()
+        .then(function () {
+          pipDrawLoop();
+          return pipVideo.requestPictureInPicture();
+        })
+        .catch(function () {
+          controlsStatus.textContent = "PiPを開始できませんでした";
+          stopPipLoop();
+        });
+    });
+
+    pipVideo.addEventListener("leavepictureinpicture", stopPipLoop);
+
     // コントロールバーの自動非表示(YouTube風)
     var hideTimer = null;
     function showControlsTemporarily() {
@@ -516,52 +856,19 @@
     player.addEventListener("touchstart", showControlsTemporarily);
     showControlsTemporarily();
 
-    // --- 再生ソース切り替え(HLS / YouTube) ---
-    var sourceTabs = document.getElementById("sourceTabs");
-    var youtubeNote = document.getElementById("youtubeNote");
-    var youtubePlayerEl = document.getElementById("youtubePlayer");
-    var youtubeIframe = document.getElementById("youtubeIframe");
-    var youtubeEmptyMsg = document.getElementById("youtubeEmptyMsg");
-    var currentSource = "hls";
-    var currentYoutubeVideoId = null;
-
-    function updateYoutubeEmbed() {
-      if (currentSource !== "youtube") return;
-      if (currentYoutubeVideoId) {
-        var wantedSrc = "https://www.youtube.com/embed/" + currentYoutubeVideoId + "?autoplay=1&mute=1";
-        if (youtubeIframe.src !== wantedSrc) youtubeIframe.src = wantedSrc;
-        youtubeIframe.style.display = "block";
-        youtubeEmptyMsg.style.display = "none";
-      } else {
-        youtubeIframe.src = "";
-        youtubeIframe.style.display = "none";
-        youtubeEmptyMsg.style.display = "flex";
-      }
-    }
-
-    function setSource(source) {
-      currentSource = source;
-      Array.prototype.forEach.call(sourceTabs.children, function (btn) {
-        btn.classList.toggle("active", btn.dataset.source === source);
-      });
-      player.classList.toggle("tab-panel-hidden", source !== "hls");
-      youtubePlayerEl.classList.toggle("tab-panel-hidden", source !== "youtube");
-      youtubeNote.classList.toggle("tab-panel-hidden", source !== "youtube");
-      if (source === "youtube") {
-        updateYoutubeEmbed();
-      } else {
-        youtubeIframe.src = "";
-      }
-    }
-    Array.prototype.forEach.call(sourceTabs.children, function (btn) {
-      btn.addEventListener("click", function () { setSource(btn.dataset.source); });
-    });
-
     // --- 配信状態のポーリング ---
     var liveBadge = document.getElementById("liveBadge");
     var liveBadgeText = document.getElementById("liveBadgeText");
     var batteryBadge = document.getElementById("batteryBadge");
     var batteryText = document.getElementById("batteryText");
+    var batteryFillRect = document.getElementById("batteryFillRect");
+    var BATTERY_FILL_MAX_WIDTH = 15;
+
+    function updateBatteryIcon(percent) {
+      var ratio = Math.max(0, Math.min(100, percent)) / 100;
+      batteryFillRect.setAttribute("width", (ratio * BATTERY_FILL_MAX_WIDTH).toFixed(1));
+      batteryFillRect.setAttribute("fill", percent <= 20 ? "#ff3b3b" : percent <= 50 ? "#ffb300" : "#fff");
+    }
     var subStatus = document.getElementById("subStatus");
     var startBtn = document.getElementById("startBtn");
     var stopBtn = document.getElementById("stopBtn");
@@ -619,6 +926,7 @@
       if (typeof s.battery === "number") {
         batteryBadge.style.display = "flex";
         batteryText.textContent = s.battery + "%";
+        updateBatteryIcon(s.battery);
       } else {
         batteryBadge.style.display = "none";
       }
@@ -634,9 +942,6 @@
       }
 
       updateActionButtons();
-
-      currentYoutubeVideoId = s.youtubeVideoId || null;
-      updateYoutubeEmbed();
 
       if (s.live && lastLive === false) {
         // 停止していたところから配信が始まった: HLSを読み込み直す
@@ -655,6 +960,95 @@
     }
     pollStatus();
     setInterval(pollStatus, 5000);
+
+    // --- 映像調整(明るさ/コントラスト/彩度/ガンマ) ---
+    // あくまで視聴側の見た目補正であり、配信・録画自体の露出は変わらない
+    // (BLE経由でのカメラ露出制御は未対応。ジンバル操作と同様の理由でスコープ外)。
+    var videoAdjustPanel = document.getElementById("videoAdjustPanel");
+    var videoAdjustToggle = document.getElementById("videoAdjustToggle");
+    videoAdjustToggle.addEventListener("click", function () {
+      videoAdjustPanel.classList.toggle("open");
+    });
+
+    var brightnessRange = document.getElementById("brightnessRange");
+    var gammaRange = document.getElementById("gammaRange");
+    var contrastRange = document.getElementById("contrastRange");
+    var saturateRange = document.getElementById("saturateRange");
+    var brightnessValue = document.getElementById("brightnessValue");
+    var gammaValue = document.getElementById("gammaValue");
+    var contrastValue = document.getElementById("contrastValue");
+    var saturateValue = document.getElementById("saturateValue");
+    var gammaFuncR = document.getElementById("gammaFuncR");
+    var gammaFuncG = document.getElementById("gammaFuncG");
+    var gammaFuncB = document.getElementById("gammaFuncB");
+
+    var DEFAULT_FILTER = { brightness: 1, gamma: 1, contrast: 1, saturate: 1 };
+    var NIGHT_PRESET = { brightness: 1.5, gamma: 1.8, contrast: 1.1, saturate: 1.1 };
+    var FILTER_STORAGE_KEY = "camVideoFilter";
+
+    function applyVideoFilter(f) {
+      video.style.filter =
+        "brightness(" + f.brightness + ") " +
+        "contrast(" + f.contrast + ") " +
+        "saturate(" + f.saturate + ") " +
+        "url(#gammaFilter)";
+      var exponent = 1 / f.gamma;
+      [gammaFuncR, gammaFuncG, gammaFuncB].forEach(function (fn) {
+        fn.setAttribute("exponent", exponent);
+      });
+    }
+
+    function setSliderUI(f) {
+      brightnessRange.value = f.brightness;
+      gammaRange.value = f.gamma;
+      contrastRange.value = f.contrast;
+      saturateRange.value = f.saturate;
+      brightnessValue.textContent = f.brightness.toFixed(2);
+      gammaValue.textContent = f.gamma.toFixed(2);
+      contrastValue.textContent = f.contrast.toFixed(2);
+      saturateValue.textContent = f.saturate.toFixed(2);
+    }
+
+    function currentFilterFromUI() {
+      return {
+        brightness: Number(brightnessRange.value),
+        gamma: Number(gammaRange.value),
+        contrast: Number(contrastRange.value),
+        saturate: Number(saturateRange.value),
+      };
+    }
+
+    function saveFilter(f) {
+      try { localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify(f)); } catch (e) {}
+    }
+
+    function loadFilter() {
+      try {
+        var raw = localStorage.getItem(FILTER_STORAGE_KEY);
+        if (!raw) return null;
+        var parsed = JSON.parse(raw);
+        return {
+          brightness: Number(parsed.brightness) || 1,
+          gamma: Number(parsed.gamma) || 1,
+          contrast: Number(parsed.contrast) || 1,
+          saturate: Number(parsed.saturate) || 1,
+        };
+      } catch (e) { return null; }
+    }
+
+    function setFilter(f) {
+      setSliderUI(f);
+      applyVideoFilter(f);
+      saveFilter(f);
+    }
+
+    [brightnessRange, gammaRange, contrastRange, saturateRange].forEach(function (el) {
+      el.addEventListener("input", function () { setFilter(currentFilterFromUI()); });
+    });
+    document.getElementById("resetFilterBtn").addEventListener("click", function () { setFilter(DEFAULT_FILTER); });
+    document.getElementById("nightPresetBtn").addEventListener("click", function () { setFilter(NIGHT_PRESET); });
+
+    setFilter(loadFilter() || DEFAULT_FILTER);
 
     // --- 操作パネル ---
     var panel = document.getElementById("panel");
@@ -678,11 +1072,17 @@
     // --- ロック状態(パスワードが実際にサーバーで検証済みかどうかを明示する) ---
     var unlocked = false;
 
+    var LOCK_ICON_PATH = "M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zM9 6c0-1.66 1.34-3 3-3s3 1.34 3 3v2H9V6zm9 14H6V10h12v10z";
+    var LOCK_OPEN_ICON_PATH = "M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6h2c0-1.66 1.34-3 3-3s3 1.34 3 3v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zM18 20H6V10h12v10z";
+    var lockIconPath = document.getElementById("lockIconPath");
+    var lockStatusText = document.getElementById("lockStatusText");
+
     function setLocked(isUnlocked) {
       unlocked = isUnlocked;
       lockRow.classList.toggle("unlocked", isUnlocked);
       lockStatus.classList.toggle("unlocked", isUnlocked);
-      lockStatus.textContent = isUnlocked ? "🔓 解除済み" : "🔒 ロック中";
+      lockIconPath.setAttribute("d", isUnlocked ? LOCK_OPEN_ICON_PATH : LOCK_ICON_PATH);
+      lockStatusText.textContent = isUnlocked ? "解除済み" : "ロック中";
       resolutionSel.disabled = !isUnlocked;
       bitrateSel.disabled = !isUnlocked;
       fpsSel.disabled = !isUnlocked;
