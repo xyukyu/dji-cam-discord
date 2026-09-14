@@ -12,7 +12,12 @@ rtmpAddress: :1935          # 自宅LAN内のみで待ち受け(外部公開し�
 hls: yes
 hlsAddress: :8888
 hlsAlwaysRemux: yes         # 誰も見ていなくてもRTMP受信中は常にHLSを生成する
-hlsVariant: lowLatency
+# lowLatencyはLL-HLSのブロッキング(ロングポーリング)リクエストを使うため、
+# Osmo Pocket 3側のGOP長が自宅WiFiの電波状況で不安定になるとmuxerが頻繁に
+# 再構成され、Botのリバースプロキシ(bot/index.js の /pocket3)が
+# "socket hang up" で頻発して落ちる原因になっていた(2026-09-14に実機確認)。
+# 低遅延性より安定性を優先しmpegtsに変更。
+hlsVariant: mpegts
 hlsSegmentCount: 7
 hlsSegmentDuration: 1s
 
